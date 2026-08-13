@@ -1,0 +1,58 @@
+newmtl sydney_terrain
+Ka .31 .42 .25
+Kd .31 .42 .25
+Ks .03 .03 .03
+Ns 20
+d 1
+illum 2
+newmtl sydney_dock
+Ka .49 .47 .40
+Kd .49 .47 .40
+Ks .08 .08 .08
+Ns 20
+d 1
+illum 2
+newmtl sydney_dark_dock
+Ka .20 .22 .21
+Kd .20 .22 .21
+Ks .12 .12 .12
+Ns 20
+d 1
+illum 2
+newmtl sydney_metal
+Ka .48 .51 .50
+Kd .48 .51 .50
+Ks .25 .25 .25
+Ns 20
+d 1
+illum 2
+newmtl sydney_roof
+Ka .40 .25 .17
+Kd .40 .25 .17
+Ks .08 .08 .08
+Ns 20
+d 1
+illum 2
+newmtl sydney_wall
+Ka .62 .57 .46
+Kd .62 .57 .46
+Ks .04 .04 .04
+Ns 20
+d 1
+illum 2
+newmtl sydney_window
+Ka .05 .18 .23
+Kd .05 .18 .23
+Ks .38 .38 .38
+Ns 20
+d 1
+illum 2
+newmtl sydney_tree
+Ka .62 .72 .52
+Kd .62 .72 .52
+Ks .02 .02 .02
+Ns 20
+d 1
+illum 2
+map_Kd TreeDiffuse.png
+map_d ../materials/textures/TreeDiffuse.png

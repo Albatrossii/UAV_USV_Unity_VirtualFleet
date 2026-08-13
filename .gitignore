@@ -1,0 +1,15 @@
+/Library/
+/Logs/
+/Temp/
+/obj/
+/UserSettings/
+*.csproj
+*.sln
+*.user
+mono_crash.mem.*.blob
+__pycache__/
+*.py[cod]
+/.runtime/
+
+# Generated screenshots and preview renders in the project root.
+/*.png
