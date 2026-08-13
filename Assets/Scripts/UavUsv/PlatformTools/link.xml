@@ -4,5 +4,6 @@
     <type fullname="UavUsv.PlatformTools.WebDeviceObserverCamera" preserve="all" />
     <type fullname="UavUsv.PlatformTools.WebVehicleCommandController" preserve="all" />
     <type fullname="UavUsv.PlatformTools.WebTrajectoryTelemetryBridge" preserve="all" />
+    <type fullname="UavUsv.PlatformTools.VirtualFleetPlatformBridge" preserve="all" />
   </assembly>
 </linker>

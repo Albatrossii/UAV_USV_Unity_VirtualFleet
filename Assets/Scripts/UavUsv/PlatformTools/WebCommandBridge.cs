@@ -53,6 +53,7 @@ namespace UavUsv.PlatformTools
 
         private WebDeviceObserverCamera observer;
         private WebVehicleCommandController vehicleController;
+        private VirtualFleetPlatformBridge virtualFleetBridge;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -74,6 +75,9 @@ namespace UavUsv.PlatformTools
             if (!telemetry) telemetry = host.AddComponent<WebTrajectoryTelemetryBridge>();
             telemetry.Initialize(controller);
             bridge.vehicleController = controller;
+            bridge.virtualFleetBridge = host.GetComponent<VirtualFleetPlatformBridge>();
+            if (!bridge.virtualFleetBridge)
+                bridge.virtualFleetBridge = host.AddComponent<VirtualFleetPlatformBridge>();
 #endif
         }
 
@@ -103,13 +107,20 @@ namespace UavUsv.PlatformTools
                 return;
             }
 
+            string normalizedType = message.type.Trim();
+            if (virtualFleetBridge && virtualFleetBridge.CanHandle(normalizedType))
+            {
+                virtualFleetBridge.Receive(json);
+                return;
+            }
+
             if (!EnsureObserver())
             {
                 PostCameraResult(message.requestId, false, string.Empty, string.Empty, string.Empty, "Unity camera is not ready");
                 return;
             }
 
-            string type = message.type.Trim().ToLowerInvariant();
+            string type = normalizedType.ToLowerInvariant();
             VuePayload payload = message.payload ?? new VuePayload();
             switch (type)
             {
