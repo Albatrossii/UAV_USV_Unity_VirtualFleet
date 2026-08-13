@@ -2,28 +2,17 @@ using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Scripting;
+using UavUsv;
 
 namespace UavUsv.PlatformTools
 {
-    public interface IVirtualFleetRuntime
-    {
-        void Configure(VirtualFleetConfig config);
-        void Regenerate();
-        void ApplyPoseBatch(VirtualPoseBatch batch);
-        void StartMission();
-        void PauseMission();
-        void ResumeMission();
-        void StopMission();
-        void ResetMission();
-    }
-
     [Preserve]
     public sealed class VirtualFleetPlatformBridge : MonoBehaviour
     {
         private const string RuntimeNotReadyCode = "runtime_not_ready";
-        private IVirtualFleetRuntime runtime;
-        private VirtualFleetConfig currentConfig;
-        private int currentRunId;
+        private UavUsv.IVirtualFleetRuntime runtime;
+        private UavUsv.VirtualFleetConfig currentConfig;
+        private long currentRunId;
         private long lastSequence = -1;
         private MissionState missionState = MissionState.Stopped;
 
@@ -32,9 +21,105 @@ namespace UavUsv.PlatformTools
         private static extern void VueWebGlPostMessage(string message);
 #endif
 
-        public void Initialize(IVirtualFleetRuntime fleetRuntime)
+        public void Initialize(UavUsv.IVirtualFleetRuntime fleetRuntime)
         {
             runtime = fleetRuntime;
+        }
+
+        private void Awake()
+        {
+            TryFindRuntime();
+        }
+
+        public void InitializePlatform(string json)
+        {
+            InitializePlatformPayload payload = JsonUtility.FromJson<InitializePlatformPayload>(json) ??
+                new InitializePlatformPayload();
+            payload.runtimeMode = string.IsNullOrWhiteSpace(payload.runtimeMode)
+                ? VirtualFleetProtocol.RuntimeMode
+                : payload.runtimeMode;
+            payload.protocolVersion = string.IsNullOrWhiteSpace(payload.protocolVersion)
+                ? VirtualFleetProtocol.Version
+                : payload.protocolVersion;
+            HandleInitialize(new InitializePlatformMessage
+            {
+                type = VirtualFleetMessageTypes.InitializePlatform,
+                requestId = NewRequestId(VirtualFleetMessageTypes.InitializePlatform),
+                timestamp = Now(),
+                payload = payload
+            });
+        }
+
+        public void LoadScenario(string json)
+        {
+            FrontendScenarioPayload input =
+                JsonUtility.FromJson<FrontendScenarioPayload>(json) ??
+                new FrontendScenarioPayload();
+            long runId = ParseLong(input.runId, 1);
+            HandleLoadScenario(new LoadScenarioMessage
+            {
+                type = VirtualFleetMessageTypes.LoadScenario,
+                requestId = NewRequestId(VirtualFleetMessageTypes.LoadScenario),
+                timestamp = Now(),
+                payload = new VirtualFleetConfigPayload
+                {
+                    runtimeMode = VirtualFleetProtocol.RuntimeMode,
+                    algorithmCode = ResolveAlgorithm(input.scenarioId),
+                    runId = runId,
+                    uavCount = input.uavCount > 0 ? input.uavCount : 3,
+                    usvCount = input.usvCount > 0 ? input.usvCount : 3,
+                    targetCount = 1,
+                    formationType = string.IsNullOrWhiteSpace(input.formationType)
+                        ? VirtualFleetFormations.Encirclement
+                        : input.formationType,
+                    initialSpeedMps = input.initialSpeedMps,
+                    initialHeadingDeg = input.initialHeadingDeg,
+                    seed = input.seed
+                }
+            });
+        }
+
+        public void ApplyPoseBatch(string json)
+        {
+            VirtualPoseBatchPayload payload =
+                JsonUtility.FromJson<VirtualPoseBatchPayload>(json) ??
+                new VirtualPoseBatchPayload();
+            payload.runtimeMode = string.IsNullOrWhiteSpace(payload.runtimeMode)
+                ? VirtualFleetProtocol.RuntimeMode
+                : payload.runtimeMode;
+            HandlePoseBatch(new ApplyPoseBatchMessage
+            {
+                type = VirtualFleetMessageTypes.ApplyPoseBatch,
+                requestId = NewRequestId(VirtualFleetMessageTypes.ApplyPoseBatch),
+                timestamp = Now(),
+                payload = payload
+            });
+        }
+
+        public void SetMissionState(string json)
+        {
+            FrontendMissionPayload input =
+                JsonUtility.FromJson<FrontendMissionPayload>(json) ??
+                new FrontendMissionPayload();
+            string state = (input.state ?? string.Empty).Trim().ToUpperInvariant();
+            string command = state == "RUNNING"
+                ? VirtualFleetMessageTypes.MissionStart
+                : state == "PAUSED"
+                    ? VirtualFleetMessageTypes.MissionPause
+                    : state == "STOPPED"
+                        ? VirtualFleetMessageTypes.MissionStop
+                        : VirtualFleetMessageTypes.MissionReset;
+            HandleMission(new MissionCommandMessage
+            {
+                type = command,
+                requestId = NewRequestId(command),
+                timestamp = Now(),
+                payload = new MissionCommandPayload
+                {
+                    runId = ParseLong(input.runId, currentRunId),
+                    state = state
+                }
+            });
         }
 
         [Preserve]
@@ -143,7 +228,7 @@ namespace UavUsv.PlatformTools
             if (!EnsureRuntime(RequestId(message)))
                 return;
 
-            currentConfig = message.payload;
+            currentConfig = ToRuntimeConfig(message.payload);
             currentRunId = currentConfig.runId;
             lastSequence = -1;
             missionState = MissionState.Stopped;
@@ -165,12 +250,12 @@ namespace UavUsv.PlatformTools
                 return;
 
             if (currentConfig == null)
-                currentConfig = new VirtualFleetConfig();
+                currentConfig = new UavUsv.VirtualFleetConfig();
             currentConfig.runId = message.payload.runId;
             currentConfig.uavCount = message.payload.uavCount;
             currentConfig.usvCount = message.payload.usvCount;
             currentConfig.targetCount = VirtualFleetProtocol.FixedTargetCount;
-            currentConfig.formationType = message.payload.formationType;
+            currentConfig.formationType = ParseFormation(message.payload.formationType);
             currentRunId = currentConfig.runId;
             lastSequence = -1;
             runtime.Configure(currentConfig);
@@ -192,7 +277,8 @@ namespace UavUsv.PlatformTools
                 return;
 
             lastSequence = message.payload.sequence;
-            runtime.ApplyPoseBatch(message.payload);
+            VirtualPoseBatchApplyResult applyResult =
+                runtime.ApplyPoseBatch(ToRuntimePoseBatch(message.payload));
             Emit(new PoseAppliedResponse
             {
                 type = "poseFrameApplied",
@@ -200,12 +286,12 @@ namespace UavUsv.PlatformTools
                 timestamp = Now(),
                 payload = new PoseAppliedPayload
                 {
-                    success = true,
-                    runId = currentRunId,
+                    success = applyResult.success,
+                    runId = applyResult.runId,
                     sequence = lastSequence,
-                    appliedCount = CountPoses(message.payload),
-                    missingDeviceCodes = new string[0],
-                    unknownDeviceCodes = new string[0]
+                    appliedCount = applyResult.appliedCount,
+                    missingDeviceCodes = applyResult.missingDeviceCodes ?? new string[0],
+                    unknownDeviceCodes = applyResult.unknownDeviceCodes ?? new string[0]
                 }
             });
         }
@@ -259,14 +345,6 @@ namespace UavUsv.PlatformTools
             });
         }
 
-        private bool EnsureRuntime(string requestId)
-        {
-            if (runtime != null)
-                return true;
-            EmitError(requestId, RuntimeNotReadyCode, "Virtual fleet runtime is not registered");
-            return false;
-        }
-
         private void EmitScenarioReady(string requestId)
         {
             Emit(new ScenarioReadyResponse
@@ -289,7 +367,7 @@ namespace UavUsv.PlatformTools
             });
         }
 
-        private static string[] BuildDeviceCodes(VirtualFleetConfig config)
+        private static string[] BuildDeviceCodes(UavUsv.VirtualFleetConfig config)
         {
             var codes = new string[config.uavCount + config.usvCount + config.targetCount];
             int index = 0;
@@ -302,10 +380,160 @@ namespace UavUsv.PlatformTools
             return codes;
         }
 
-        private static int CountPoses(VirtualPoseBatch batch)
+        private static UavUsv.VirtualFleetConfig ToRuntimeConfig(
+            VirtualFleetConfigPayload payload)
         {
-            return (batch.vehicles == null ? 0 : batch.vehicles.Length) +
-                (batch.targets == null ? 0 : batch.targets.Length);
+            return new UavUsv.VirtualFleetConfig
+            {
+                runtimeMode = payload.runtimeMode,
+                algorithmCode = payload.algorithmCode,
+                runId = payload.runId,
+                uavCount = payload.uavCount,
+                usvCount = payload.usvCount,
+                targetCount = payload.targetCount,
+                formationType = ParseFormation(payload.formationType),
+                initialSpeedMps = payload.initialSpeedMps,
+                initialHeadingDeg = payload.initialHeadingDeg,
+                seed = payload.seed
+            };
+        }
+
+        private static UavUsv.VirtualPoseBatch ToRuntimePoseBatch(
+            VirtualPoseBatchPayload payload)
+        {
+            return new UavUsv.VirtualPoseBatch
+            {
+                runtimeMode = payload.runtimeMode,
+                runId = payload.runId,
+                sequence = payload.sequence,
+                sampleTime = payload.sampleTime > 0 ? payload.sampleTime : Now(),
+                vehicles = payload.vehicles ?? ConvertInputs(payload.poses),
+                targets = payload.targets
+            };
+        }
+
+        private static UavUsv.VirtualPose[] ConvertInputs(VirtualPoseInput[] inputs)
+        {
+            if (inputs == null)
+                return null;
+            var poses = new UavUsv.VirtualPose[inputs.Length];
+            for (int i = 0; i < inputs.Length; i++)
+            {
+                VirtualPoseInput input = inputs[i] ?? new VirtualPoseInput();
+                string code = input.deviceCode;
+                if (string.IsNullOrWhiteSpace(code)) code = input.deviceId;
+                if (string.IsNullOrWhiteSpace(code)) code = input.code;
+                if (string.IsNullOrWhiteSpace(code)) code = input.id;
+                float east = input.eastM;
+                float north = input.northM;
+                float up = input.upM;
+                if (input.position != null && input.position.Length >= 3)
+                {
+                    east = input.position[0];
+                    north = input.position[1];
+                    up = input.position[2];
+                }
+                poses[i] = new UavUsv.VirtualPose
+                {
+                    deviceCode = VirtualFleetMessageValidator.NormalizeDeviceCode(code),
+                    deviceType = ResolveDeviceType(code, input.deviceType, input.type),
+                    eastM = east,
+                    northM = north,
+                    upM = up,
+                    headingDeg = input.yawDegrees != 0f ? input.yawDegrees : input.yaw,
+                    speedMps = input.speedMps,
+                    state = input.state,
+                    valid = input.valid
+                };
+            }
+            return poses;
+        }
+
+        private static string ResolveDeviceType(string code, string deviceType, string type)
+        {
+            if (!string.IsNullOrWhiteSpace(deviceType))
+                return deviceType.Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(type))
+                return type.Trim().ToUpperInvariant();
+            string normalized = VirtualFleetMessageValidator.NormalizeDeviceCode(code);
+            return normalized.StartsWith("USV-", StringComparison.Ordinal) ? "USV" : "UAV";
+        }
+
+        private void TryFindRuntime()
+        {
+            if (runtime != null)
+                return;
+            VirtualFleetScenarioController controller =
+                FindObjectOfType<VirtualFleetScenarioController>();
+            if (controller)
+                runtime = controller;
+        }
+
+        private bool EnsureRuntime(string requestId)
+        {
+            TryFindRuntime();
+            if (runtime != null)
+                return true;
+            EmitError(requestId, RuntimeNotReadyCode, "Virtual fleet runtime is not registered");
+            return false;
+        }
+
+        private static string ResolveAlgorithm(string scenarioId)
+        {
+            return string.Equals(scenarioId, VirtualFleetAlgorithms.Escort, StringComparison.OrdinalIgnoreCase)
+                ? VirtualFleetAlgorithms.Escort
+                : VirtualFleetAlgorithms.Capture;
+        }
+
+        private static long ParseLong(string value, long fallback)
+        {
+            return long.TryParse(value, out long result) && result > 0 ? result : fallback;
+        }
+
+        private static string NewRequestId(string type)
+        {
+            return type + ":" + Now();
+        }
+
+        [Serializable]
+        private sealed class FrontendScenarioPayload
+        {
+            public string runId;
+            public string scenarioId;
+            public string sceneName;
+            public string coordinateSystem;
+            public int uavCount;
+            public int usvCount;
+            public string formationType;
+            public float initialSpeedMps;
+            public float initialHeadingDeg;
+            public int seed;
+        }
+
+        [Serializable]
+        private sealed class FrontendMissionPayload
+        {
+            public string runId;
+            public long sequence;
+            public string state;
+            public string phase;
+            public string status;
+            public string message;
+        }
+
+        private static VirtualFleetFormationType ParseFormation(string value)
+        {
+            switch ((value ?? string.Empty).Trim().ToUpperInvariant())
+            {
+                case VirtualFleetFormations.Random:
+                    return VirtualFleetFormationType.Random;
+                case VirtualFleetFormations.Circle:
+                    return VirtualFleetFormationType.Circle;
+                case VirtualFleetFormations.Escort:
+                    return VirtualFleetFormationType.Escort;
+                default:
+                    return VirtualFleetFormationType.Encirclement;
+            }
         }
 
         private static string RequestId(VirtualFleetMessage message)

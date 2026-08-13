@@ -75,9 +75,21 @@ namespace UavUsv.PlatformTools
             if (!telemetry) telemetry = host.AddComponent<WebTrajectoryTelemetryBridge>();
             telemetry.Initialize(controller);
             bridge.vehicleController = controller;
-            bridge.virtualFleetBridge = host.GetComponent<VirtualFleetPlatformBridge>();
+
+            GameObject platformExisting = GameObject.Find("PlatformBridge");
+            GameObject platformHost = platformExisting
+                ? platformExisting
+                : new GameObject("PlatformBridge");
+            DontDestroyOnLoad(platformHost);
+            bridge.virtualFleetBridge =
+                platformHost.GetComponent<VirtualFleetPlatformBridge>();
             if (!bridge.virtualFleetBridge)
-                bridge.virtualFleetBridge = host.AddComponent<VirtualFleetPlatformBridge>();
+                bridge.virtualFleetBridge =
+                    platformHost.AddComponent<VirtualFleetPlatformBridge>();
+            UavUsv.VirtualFleetScenarioController scenario =
+                FindObjectOfType<UavUsv.VirtualFleetScenarioController>();
+            if (scenario)
+                bridge.virtualFleetBridge.Initialize(scenario);
 #endif
         }
 

@@ -1,4 +1,5 @@
 using System;
+using UavUsv;
 
 namespace UavUsv.PlatformTools
 {
@@ -86,21 +87,15 @@ namespace UavUsv.PlatformTools
     [Serializable]
     public sealed class LoadScenarioMessage : VirtualFleetMessage
     {
-        public VirtualFleetConfig payload;
+        public VirtualFleetConfigPayload payload;
     }
 
     [Serializable]
-    public sealed class RegenerateScenarioMessage : VirtualFleetMessage
-    {
-        public RegenerateScenarioPayload payload;
-    }
-
-    [Serializable]
-    public sealed class VirtualFleetConfig
+    public sealed class VirtualFleetConfigPayload
     {
         public string runtimeMode;
         public string algorithmCode;
-        public int runId;
+        public long runId;
         public int uavCount;
         public int usvCount;
         public int targetCount;
@@ -111,9 +106,15 @@ namespace UavUsv.PlatformTools
     }
 
     [Serializable]
+    public sealed class RegenerateScenarioMessage : VirtualFleetMessage
+    {
+        public RegenerateScenarioPayload payload;
+    }
+
+    [Serializable]
     public sealed class RegenerateScenarioPayload
     {
-        public int runId;
+        public long runId;
         public int uavCount;
         public int usvCount;
         public string formationType;
@@ -123,44 +124,43 @@ namespace UavUsv.PlatformTools
     [Serializable]
     public sealed class ApplyPoseBatchMessage : VirtualFleetMessage
     {
-        public VirtualPoseBatch payload;
+        public VirtualPoseBatchPayload payload;
     }
 
     [Serializable]
-    public sealed class VirtualPoseBatch
+    public sealed class VirtualPoseBatchPayload
     {
         public string runtimeMode;
-        public int runId;
+        public long runId;
         public long sequence;
         public long sampleTime;
-        public VirtualPose[] vehicles;
-        public VirtualTargetPose[] targets;
+        public UavUsv.VirtualPose[] vehicles;
+        public UavUsv.VirtualPose[] targets;
+        public VirtualPoseInput[] poses;
     }
 
     [Serializable]
-    public sealed class VirtualPose
+    public sealed class VirtualPoseInput
     {
         public string deviceCode;
+        public string deviceId;
+        public string code;
+        public string id;
         public string deviceType;
+        public string type;
+        public string state;
+        public bool valid = true;
         public float eastM;
         public float northM;
         public float upM;
         public float headingDeg;
         public float speedMps;
-        public string state;
-        public bool valid;
-    }
-
-    [Serializable]
-    public sealed class VirtualTargetPose
-    {
-        public string deviceCode;
-        public string targetType;
-        public float eastM;
-        public float northM;
-        public float upM;
-        public float headingDeg;
-        public bool valid;
+        public float x;
+        public float y;
+        public float z;
+        public float yaw;
+        public float yawDegrees;
+        public float[] position;
     }
 
     [Serializable]
@@ -172,6 +172,7 @@ namespace UavUsv.PlatformTools
     [Serializable]
     public sealed class MissionCommandPayload
     {
-        public int runId;
+        public long runId;
+        public string state;
     }
 }
