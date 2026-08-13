@@ -25,6 +25,8 @@ namespace UavUsv
         public VirtualFleetMissionState MissionState => missionState;
         public int UavCount => uavs.Count;
         public int UsvCount => usvs.Count;
+        public IReadOnlyList<VirtualFleetDeviceState> Uavs => uavs;
+        public IReadOnlyList<VirtualFleetDeviceState> Usvs => usvs;
         public bool CanModifyFleet =>
             missionState == VirtualFleetMissionState.Stopped ||
             missionState == VirtualFleetMissionState.Reset;
@@ -55,6 +57,24 @@ namespace UavUsv
             for (int i = 0; i < Mathf.Clamp(usvCount, 1, MaximumUsvCount); i++)
                 AddUsvInternal();
             NotifyFleetChanged();
+        }
+
+        public bool TryApplyPose(
+            string deviceCode,
+            Vector3 position,
+            Quaternion rotation,
+            string status)
+        {
+            VirtualFleetDeviceState state = FindDevice(deviceCode);
+            if (state == null || !state.transform)
+                return false;
+
+            state.transform.SetPositionAndRotation(position, rotation);
+            state.position = position;
+            state.rotation = rotation;
+            if (!string.IsNullOrWhiteSpace(status))
+                state.status = status.Trim().ToUpperInvariant();
+            return true;
         }
 
         public Transform[] GetUavTransforms()
@@ -120,7 +140,10 @@ namespace UavUsv
         public void ResetMission()
         {
             SetMissionState(VirtualFleetMissionState.Reset);
-            Initialize(DefaultUavCount, DefaultUsvCount);
+            Initialize(
+                Mathf.Max(1, uavs.Count),
+                Mathf.Max(1, usvs.Count)
+            );
             SetMissionState(VirtualFleetMissionState.Stopped);
         }
 
@@ -209,6 +232,20 @@ namespace UavUsv
         private void NotifyFleetChanged()
         {
             FleetChanged?.Invoke();
+        }
+
+        private VirtualFleetDeviceState FindDevice(string deviceCode)
+        {
+            if (string.IsNullOrWhiteSpace(deviceCode))
+                return null;
+            string normalized = deviceCode.Trim();
+            for (int i = 0; i < uavs.Count; i++)
+                if (string.Equals(uavs[i].deviceCode, normalized, StringComparison.OrdinalIgnoreCase))
+                    return uavs[i];
+            for (int i = 0; i < usvs.Count; i++)
+                if (string.Equals(usvs[i].deviceCode, normalized, StringComparison.OrdinalIgnoreCase))
+                    return usvs[i];
+            return null;
         }
 
         private static Transform[] ToTransformArray(
