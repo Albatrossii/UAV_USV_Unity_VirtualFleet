@@ -613,7 +613,7 @@ namespace UavUsv.PlatformTools
         {
             public bool success;
             public string runtimeMode;
-            public int runId;
+            public long runId;
             public string algorithmCode;
             public int uavCount;
             public int usvCount;
@@ -635,7 +635,7 @@ namespace UavUsv.PlatformTools
         private sealed class PoseAppliedPayload
         {
             public bool success;
-            public int runId;
+            public long runId;
             public long sequence;
             public int appliedCount;
             public string[] missingDeviceCodes;
@@ -655,7 +655,7 @@ namespace UavUsv.PlatformTools
         private sealed class MissionStatePayload
         {
             public bool success;
-            public int runId;
+            public long runId;
             public string missionState;
         }
 
@@ -674,7 +674,7 @@ namespace UavUsv.PlatformTools
             public bool success;
             public string code;
             public string message;
-            public int runId;
+            public long runId;
         }
     }
 }
