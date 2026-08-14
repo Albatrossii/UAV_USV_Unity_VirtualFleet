@@ -134,7 +134,10 @@ namespace UavUsv.PlatformTools
             HandleInitialize(new InitializePlatformMessage
             {
                 type = VirtualFleetMessageTypes.InitializePlatform,
-                requestId = NewRequestId(VirtualFleetMessageTypes.InitializePlatform),
+                requestId = FirstNonEmpty(
+                    payload.requestId,
+                    NewRequestId(VirtualFleetMessageTypes.InitializePlatform)
+                ),
                 timestamp = Now(),
                 payload = payload
             });
@@ -185,7 +188,10 @@ namespace UavUsv.PlatformTools
             HandlePoseBatch(new ApplyPoseBatchMessage
             {
                 type = VirtualFleetMessageTypes.ApplyPoseBatch,
-                requestId = NewRequestId(VirtualFleetMessageTypes.ApplyPoseBatch),
+                requestId = FirstNonEmpty(
+                    payload.requestId,
+                    NewRequestId(VirtualFleetMessageTypes.ApplyPoseBatch)
+                ),
                 timestamp = Now(),
                 payload = payload
             });
@@ -207,7 +213,7 @@ namespace UavUsv.PlatformTools
             HandleMission(new MissionCommandMessage
             {
                 type = command,
-                requestId = NewRequestId(command),
+                requestId = FirstNonEmpty(input.requestId, NewRequestId(command)),
                 timestamp = Now(),
                 payload = new MissionCommandPayload
                 {
@@ -290,7 +296,7 @@ namespace UavUsv.PlatformTools
             Emit(new PlatformReadyResponse
             {
                 type = "platformBridgeReady",
-                requestId = string.Empty,
+                requestId = RequestId(message),
                 timestamp = Now(),
                 payload = new PlatformReadyPayload
                 {
@@ -642,6 +648,7 @@ namespace UavUsv.PlatformTools
         [Serializable]
         private sealed class FrontendMissionPayload
         {
+            public string requestId;
             public string runId;
             public long sequence;
             public string state;
