@@ -52,7 +52,8 @@ namespace UavUsv
 
             fleetManager.Initialize(
                 CurrentConfig.uavCount,
-                CurrentConfig.usvCount
+                CurrentConfig.usvCount,
+                CurrentConfig.seed
             );
             LastAppliedSequence = -1;
         }

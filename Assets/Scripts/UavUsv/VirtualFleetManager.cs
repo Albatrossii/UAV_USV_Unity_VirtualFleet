@@ -14,17 +14,20 @@ namespace UavUsv
         public const int DefaultUsvCount = 3;
         public const int MaximumUavCount = 100;
         public const int MaximumUsvCount = 100;
+        public const int DefaultRandomSeed = 20260814;
 
         private readonly List<VirtualFleetDeviceState> uavs = new List<VirtualFleetDeviceState>();
         private readonly List<VirtualFleetDeviceState> usvs = new List<VirtualFleetDeviceState>();
         private int nextUavNumber = 1;
         private int nextUsvNumber = 1;
+        private int currentRandomSeed = DefaultRandomSeed;
         private VirtualVehicleFactory factory;
         private VirtualFleetMissionState missionState = VirtualFleetMissionState.Stopped;
 
         public VirtualFleetMissionState MissionState => missionState;
         public int UavCount => uavs.Count;
         public int UsvCount => usvs.Count;
+        public int CurrentRandomSeed => currentRandomSeed;
         public IReadOnlyList<VirtualFleetDeviceState> Uavs => uavs;
         public IReadOnlyList<VirtualFleetDeviceState> Usvs => usvs;
         public bool CanModifyFleet =>
@@ -42,7 +45,10 @@ namespace UavUsv
             factory = new VirtualVehicleFactory(uavPads, usvPositions, usvYaws);
         }
 
-        public void Initialize(int uavCount = DefaultUavCount, int usvCount = DefaultUsvCount)
+        public void Initialize(
+            int uavCount = DefaultUavCount,
+            int usvCount = DefaultUsvCount,
+            int seed = DefaultRandomSeed)
         {
             if (!CanModifyFleet)
                 return;
@@ -50,6 +56,8 @@ namespace UavUsv
             ClearFleet();
             if (factory == null)
                 factory = new VirtualVehicleFactory(null, null, null);
+            currentRandomSeed = seed == 0 ? DefaultRandomSeed : seed;
+            factory.ResetRandom(currentRandomSeed);
             nextUavNumber = 1;
             nextUsvNumber = 1;
             for (int i = 0; i < Mathf.Clamp(uavCount, 1, MaximumUavCount); i++)
@@ -142,7 +150,8 @@ namespace UavUsv
             SetMissionState(VirtualFleetMissionState.Reset);
             Initialize(
                 Mathf.Max(1, uavs.Count),
-                Mathf.Max(1, usvs.Count)
+                Mathf.Max(1, usvs.Count),
+                currentRandomSeed
             );
             SetMissionState(VirtualFleetMissionState.Stopped);
         }
