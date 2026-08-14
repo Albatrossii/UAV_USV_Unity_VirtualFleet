@@ -142,6 +142,9 @@ namespace UavUsv.PlatformTools
                 case "focusdevice":
                     FocusDevice(message.requestId, payload.deviceCode);
                     break;
+                case "setcameramode":
+                    SetCameraMode(message.requestId, payload.mode);
+                    break;
                 case "switchcamera":
                     SwitchCamera(message.requestId, payload.mode);
                     break;
@@ -181,8 +184,22 @@ namespace UavUsv.PlatformTools
             return vehicleController && vehicleController.EnsureScenario();
         }
 
-        private void SelectDevice(string requestId, string requestedCode)
+        [Preserve]
+        public void SelectDevice(string requestId, string requestedCode)
         {
+            if (!EnsureObserver())
+            {
+                PostCameraResult(
+                    requestId,
+                    false,
+                    requestedCode,
+                    "device-follow",
+                    string.Empty,
+                    "Unity camera is not ready"
+                );
+                return;
+            }
+
             bool success = observer.TrySelectDevice(
                 requestedCode,
                 out string code,
@@ -199,7 +216,26 @@ namespace UavUsv.PlatformTools
             );
         }
 
-        private void FocusDevice(string requestId, string requestedCode)
+        [Preserve]
+        public void SetCameraMode(string requestId, string requestedMode)
+        {
+            if (!EnsureObserver())
+            {
+                PostCameraResult(
+                    requestId,
+                    false,
+                    string.Empty,
+                    requestedMode,
+                    string.Empty,
+                    "Unity camera is not ready"
+                );
+                return;
+            }
+            SwitchCamera(requestId, requestedMode);
+        }
+
+        [Preserve]
+        public void FocusDevice(string requestId, string requestedCode)
         {
             if (!string.IsNullOrWhiteSpace(requestedCode))
             {
@@ -218,7 +254,8 @@ namespace UavUsv.PlatformTools
             );
         }
 
-        private void SwitchCamera(string requestId, string requestedMode)
+        [Preserve]
+        public void SwitchCamera(string requestId, string requestedMode)
         {
             string mode = string.IsNullOrWhiteSpace(requestedMode)
                 ? "overview"
@@ -291,8 +328,12 @@ namespace UavUsv.PlatformTools
         {
             string state = "ERROR";
             string detail = "Unity vehicle controller is not ready";
-            bool success = EnsureVehicleController() &&
-                vehicleController.TryExecute(command, deviceCode, out state, out detail);
+            bool handledByVirtualFleet = virtualFleetBridge &&
+                virtualFleetBridge.TryExecuteMissionCommand(command, out state, out detail);
+            bool success = handledByVirtualFleet
+                ? state != "ERROR"
+                : EnsureVehicleController() &&
+                    vehicleController.TryExecute(command, deviceCode, out state, out detail);
             var response = new ResponseEnvelope
             {
                 type = "commandAck",

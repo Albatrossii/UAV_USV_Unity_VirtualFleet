@@ -15,6 +15,7 @@ namespace UavUsv.PlatformTools
         private long currentRunId;
         private long lastSequence = -1;
         private MissionState missionState = MissionState.Stopped;
+        private WebCommandBridge cameraBridge;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -29,6 +30,95 @@ namespace UavUsv.PlatformTools
         private void Awake()
         {
             TryFindRuntime();
+            cameraBridge = FindObjectOfType<WebCommandBridge>();
+        }
+
+        [Preserve]
+        public void SelectDevice(string json)
+        {
+            CameraCommandPayload payload = ParseCameraCommand(json);
+            if (!EnsureCameraBridge(payload.requestId))
+                return;
+            cameraBridge.SelectDevice(
+                payload.requestId,
+                FirstNonEmpty(payload.deviceCode, payload.deviceId)
+            );
+        }
+
+        [Preserve]
+        public void SetCameraMode(string json)
+        {
+            CameraCommandPayload payload = ParseCameraCommand(json);
+            if (!EnsureCameraBridge(payload.requestId))
+                return;
+            cameraBridge.SetCameraMode(payload.requestId, payload.mode);
+        }
+
+        [Preserve]
+        public bool TryExecuteMissionCommand(
+            string rawCommand,
+            out string state,
+            out string detail)
+        {
+            state = "ERROR";
+            detail = string.Empty;
+            string command = (rawCommand ?? string.Empty).Trim().ToLowerInvariant();
+            if (!command.StartsWith("mission", StringComparison.Ordinal))
+                return false;
+
+            TryFindRuntime();
+            if (runtime == null)
+            {
+                detail = "Virtual fleet runtime is not ready";
+                return true;
+            }
+
+            switch (command)
+            {
+                case "missionstart":
+                    runtime.StartMission();
+                    missionState = MissionState.Running;
+                    state = "RUNNING";
+                    detail = "Virtual fleet mission started";
+                    return true;
+                case "missionpause":
+                    runtime.PauseMission();
+                    missionState = MissionState.Paused;
+                    state = "PAUSED";
+                    detail = "Virtual fleet mission paused";
+                    return true;
+                case "missionresume":
+                    runtime.ResumeMission();
+                    missionState = MissionState.Running;
+                    state = "RUNNING";
+                    detail = "Virtual fleet mission resumed";
+                    return true;
+                case "missionstop":
+                case "missioncomplete":
+                case "missionfail":
+                case "missioncancel":
+                    runtime.StopMission();
+                    missionState = MissionState.Stopped;
+                    state = command == "missioncomplete"
+                        ? "COMPLETED"
+                        : command == "missionfail"
+                            ? "FAILED"
+                            : command == "missioncancel"
+                                ? "CANCELLED"
+                                : "STOPPED";
+                    detail = "Virtual fleet mission stopped";
+                    return true;
+                case "missionreset":
+                    runtime.ResetMission();
+                    missionState = MissionState.Stopped;
+                    lastSequence = -1;
+                    state = "STOPPED";
+                    detail = "Virtual fleet mission reset";
+                    return true;
+                default:
+                    detail = "Unsupported virtual fleet mission command: " + rawCommand;
+                    return true;
+            }
         }
 
         public void InitializePlatform(string json)
@@ -200,6 +290,10 @@ namespace UavUsv.PlatformTools
                 payload = new PlatformReadyPayload
                 {
                     ready = runtime != null,
+                    controlsReady = runtime != null,
+                    cameraReady = true,
+                    algorithmReady = runtime != null,
+                    visualSensorReady = false,
                     runtimeMode = VirtualFleetProtocol.RuntimeMode,
                     protocolVersion = VirtualFleetProtocol.Version,
                     buildId = message.payload.buildId,
@@ -478,6 +572,28 @@ namespace UavUsv.PlatformTools
             return false;
         }
 
+        private bool EnsureCameraBridge(string requestId)
+        {
+            if (!cameraBridge)
+                cameraBridge = FindObjectOfType<WebCommandBridge>();
+            if (cameraBridge)
+                return true;
+
+            EmitError(requestId, "camera_bridge_not_ready", "WebCommandBridge is not registered");
+            return false;
+        }
+
+        private static CameraCommandPayload ParseCameraCommand(string json)
+        {
+            CameraCommandPayload payload = JsonUtility.FromJson<CameraCommandPayload>(json);
+            return payload ?? new CameraCommandPayload();
+        }
+
+        private static string FirstNonEmpty(string primary, string fallback)
+        {
+            return string.IsNullOrWhiteSpace(primary) ? fallback : primary;
+        }
+
         private static string ResolveAlgorithm(string scenarioId)
         {
             return string.Equals(scenarioId, VirtualFleetAlgorithms.Escort, StringComparison.OrdinalIgnoreCase)
@@ -551,6 +667,15 @@ namespace UavUsv.PlatformTools
             return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }
 
+        [Serializable]
+        private sealed class CameraCommandPayload
+        {
+            public string requestId;
+            public string deviceCode;
+            public string deviceId;
+            public string mode;
+        }
+
         private static void EmitError(string requestId, string code, string message)
         {
             Emit(new CommandAckResponse
@@ -591,6 +716,10 @@ namespace UavUsv.PlatformTools
         private sealed class PlatformReadyPayload
         {
             public bool ready;
+            public bool controlsReady;
+            public bool cameraReady;
+            public bool algorithmReady;
+            public bool visualSensorReady;
             public string runtimeMode;
             public string protocolVersion;
             public string buildId;

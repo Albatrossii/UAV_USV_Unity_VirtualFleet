@@ -21,6 +21,7 @@ namespace UavUsv.PlatformTools
         private readonly List<Transform> sceneTargets = new List<Transform>();
         private Camera observedCamera;
         private UavUsv.ChaseCamera chaseCamera;
+        private UavUsv.VirtualFleetManager fleetManager;
         private Transform selectedSubject;
         private Transform lighthouse;
         private ObservationMode mode;
@@ -36,6 +37,7 @@ namespace UavUsv.PlatformTools
         {
             observedCamera = camera;
             chaseCamera = chase;
+            fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
             RefreshSceneTargets();
         }
 
@@ -61,6 +63,9 @@ namespace UavUsv.PlatformTools
             }
 
             if (!match)
+                match = FindSceneDevice(normalized);
+
+            if (!match)
             {
                 canonicalCode = normalized;
                 profile = string.Empty;
@@ -76,6 +81,20 @@ namespace UavUsv.PlatformTools
             profile = CurrentProfileName;
             error = string.Empty;
             return true;
+        }
+
+        private static Transform FindSceneDevice(string normalizedCode)
+        {
+            Transform[] transforms = FindObjectsOfType<Transform>(true);
+            for (int i = 0; i < transforms.Length; i++)
+            {
+                Transform candidate = transforms[i];
+                if (!candidate || (!IsUsv(candidate) && !IsUav(candidate)))
+                    continue;
+                if (NormalizeDeviceCode(candidate.name) == normalizedCode)
+                    return candidate;
+            }
+            return null;
         }
 
         public bool TrySelectFirst(
@@ -362,6 +381,26 @@ namespace UavUsv.PlatformTools
                     }
                 }
             }
+
+            if (!fleetManager)
+                fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
+            if (!fleetManager)
+                return;
+
+            AddFleetTargets(fleetManager.GetUavTransforms());
+            AddFleetTargets(fleetManager.GetUsvTransforms());
+        }
+
+        private void AddFleetTargets(Transform[] targets)
+        {
+            if (targets == null)
+                return;
+            for (int i = 0; i < targets.Length; i++)
+            {
+                Transform target = targets[i];
+                if (target && !sceneTargets.Contains(target))
+                    sceneTargets.Add(target);
+            }
         }
 
         private static Vector3 DeviceForward(Transform subject)
@@ -405,7 +444,7 @@ namespace UavUsv.PlatformTools
             }
             if (!int.TryParse(digits, out int index))
                 return upper;
-            return prefix + "-" + index.ToString("00");
+            return prefix + "-" + index.ToString("000");
         }
 
         private static string CanonicalDeviceCode(Transform subject)

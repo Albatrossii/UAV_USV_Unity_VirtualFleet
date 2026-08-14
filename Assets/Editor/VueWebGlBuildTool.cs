@@ -13,6 +13,7 @@ namespace UavUsv.Editor.Tools
     public static class VueWebGlBuildTool
     {
         private const string ScenePath = "Assets/Scenes/UavUsvDemo.unity";
+        private const string VirtualFleetScenePath = "Assets/Scenes/UavUsvVirtualFleet.unity";
 
         [MenuItem("UAV-USV/Tools/Build Vue WebGL")]
         public static void Build()
@@ -55,6 +56,48 @@ namespace UavUsv.Editor.Tools
             }
 
             Debug.Log("Vue WebGL build complete: " + outputPath);
+        }
+
+        public static void BuildVirtualFleet()
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+                throw new UnityEditor.Build.BuildFailedException("Exit Play Mode before building Vue WebGL.");
+
+            string requestedOutput = Environment.GetEnvironmentVariable("UAV_USV_WEBGL_OUTPUT");
+            string outputPath = Path.GetFullPath(string.IsNullOrWhiteSpace(requestedOutput)
+                ? @"C:\Users\86188\Desktop\mxy\UAV_USV_Platform\frontend\public\unity"
+                : requestedOutput);
+            string integrationIndexPath = Path.Combine(outputPath, "index.html");
+            string integrationIndex = File.Exists(integrationIndexPath)
+                ? File.ReadAllText(integrationIndexPath)
+                : string.Empty;
+
+            Directory.CreateDirectory(outputPath);
+            try
+            {
+                PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
+                PlayerSettings.WebGL.decompressionFallback = false;
+                PlayerSettings.stripEngineCode = false;
+                var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+                {
+                    scenes = new[] { VirtualFleetScenePath },
+                    locationPathName = outputPath,
+                    target = BuildTarget.WebGL,
+                    options = BuildOptions.None
+                });
+
+                if (report.summary.result != UnityEditor.Build.Reporting.BuildResult.Succeeded)
+                    throw new UnityEditor.Build.BuildFailedException(
+                        "Virtual fleet WebGL build failed: " + report.summary.result);
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(integrationIndex) &&
+                    integrationIndex.Contains("source: 'unity-webgl'"))
+                    File.WriteAllText(integrationIndexPath, integrationIndex);
+            }
+
+            Debug.Log("Virtual fleet WebGL build complete: " + outputPath);
         }
     }
 }
