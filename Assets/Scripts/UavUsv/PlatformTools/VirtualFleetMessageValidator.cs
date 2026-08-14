@@ -85,13 +85,10 @@ namespace UavUsv.PlatformTools
                 return Invalid("invalid_count", "UAV and USV counts must be in range 1..100");
             if (config.targetCount != VirtualFleetProtocol.FixedTargetCount)
                 return Invalid("invalid_count", "v1 requires targetCount to be 1");
-            if (!VirtualFleetFormations.IsSupported(config.formationType))
-                return Invalid("invalid_payload", "Unsupported formationType");
             if (config.initialSpeedMps < 0f)
                 return Invalid("invalid_payload", "initialSpeedMps cannot be negative");
 
             config.algorithmCode = config.algorithmCode.Trim().ToUpperInvariant();
-            config.formationType = config.formationType.Trim().ToUpperInvariant();
             config.initialHeadingDeg = NormalizeHeading(config.initialHeadingDeg);
             return VirtualFleetValidationResult.Valid();
         }
@@ -107,18 +104,23 @@ namespace UavUsv.PlatformTools
                 return result;
             if (message.payload == null)
                 return Invalid("invalid_payload", "Payload is required");
+            if (!IsRuntimeMode(message.payload.runtimeMode))
+                return Invalid("invalid_runtime_mode", "runtimeMode must be VIRTUAL_SIMULATION");
             if (currentState != MissionState.Stopped && currentState != MissionState.Reset)
                 return Invalid("scenario_locked", "Scenario can only regenerate while stopped or reset");
-            if (currentRunId > 0 && message.payload.runId != currentRunId)
-                return Invalid("run_mismatch", "Regenerate runId does not match current run");
             if (message.payload.runId <= 0)
                 return Invalid("invalid_payload", "runId must be positive");
+            if (!VirtualFleetAlgorithms.IsSupported(message.payload.algorithmCode))
+                return Invalid("invalid_algorithm", "Unsupported algorithmCode");
             if (message.payload.uavCount < 1 || message.payload.uavCount > VirtualFleetProtocol.MaxUavCount ||
                 message.payload.usvCount < 1 || message.payload.usvCount > VirtualFleetProtocol.MaxUsvCount)
                 return Invalid("invalid_count", "UAV and USV counts must be in range 1..100");
-            if (!VirtualFleetFormations.IsSupported(message.payload.formationType))
-                return Invalid("invalid_payload", "Unsupported formationType");
-            message.payload.formationType = message.payload.formationType.Trim().ToUpperInvariant();
+            if (message.payload.targetCount != VirtualFleetProtocol.FixedTargetCount)
+                return Invalid("invalid_count", "targetCount must be 1");
+            if (message.payload.initialSpeedMps < 0f)
+                return Invalid("invalid_payload", "initialSpeedMps cannot be negative");
+            message.payload.algorithmCode = message.payload.algorithmCode.Trim().ToUpperInvariant();
+            message.payload.initialHeadingDeg = NormalizeHeading(message.payload.initialHeadingDeg);
             return VirtualFleetValidationResult.Valid();
         }
 
