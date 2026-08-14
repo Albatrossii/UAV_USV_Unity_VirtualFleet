@@ -397,6 +397,8 @@ namespace UavUsv.PlatformTools
                 payload = new PoseAppliedPayload
                 {
                     success = applyResult.success,
+                    code = applyResult.code,
+                    message = applyResult.message,
                     runId = applyResult.runId,
                     sequence = lastSequence,
                     appliedCount = applyResult.appliedCount,
@@ -780,6 +782,8 @@ namespace UavUsv.PlatformTools
         private sealed class PoseAppliedPayload
         {
             public bool success;
+            public string code;
+            public string message;
             public long runId;
             public long sequence;
             public int appliedCount;

@@ -366,6 +366,9 @@ namespace UavUsv.PlatformTools
         private void RefreshSceneTargets()
         {
             sceneTargets.Clear();
+            if (!fleetManager)
+                fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
+
             if (!chaseCamera)
                 chaseCamera = GetComponent<UavUsv.ChaseCamera>();
             if (chaseCamera)
@@ -376,14 +379,18 @@ namespace UavUsv.PlatformTools
                 {
                     for (int i = 0; i < targets.Length; i++)
                     {
-                        if (targets[i] && !sceneTargets.Contains(targets[i]))
+                        // The virtual fleet scene shares the legacy camera
+                        // director with the demo scene. Once a fleet manager
+                        // exists, only fleet devices belong in the overview
+                        // bounds; legacy mission ships can be far away.
+                        if (!fleetManager &&
+                            targets[i] &&
+                            !sceneTargets.Contains(targets[i]))
                             sceneTargets.Add(targets[i]);
                     }
                 }
             }
 
-            if (!fleetManager)
-                fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
             if (!fleetManager)
                 return;
 
