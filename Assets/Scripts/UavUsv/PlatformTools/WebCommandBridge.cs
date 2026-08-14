@@ -53,6 +53,7 @@ namespace UavUsv.PlatformTools
 
         private WebDeviceObserverCamera observer;
         private WebVehicleCommandController vehicleController;
+        private VirtualFleetPlatformBridge virtualFleetBridge;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -74,6 +75,21 @@ namespace UavUsv.PlatformTools
             if (!telemetry) telemetry = host.AddComponent<WebTrajectoryTelemetryBridge>();
             telemetry.Initialize(controller);
             bridge.vehicleController = controller;
+
+            GameObject platformExisting = GameObject.Find("PlatformBridge");
+            GameObject platformHost = platformExisting
+                ? platformExisting
+                : new GameObject("PlatformBridge");
+            DontDestroyOnLoad(platformHost);
+            bridge.virtualFleetBridge =
+                platformHost.GetComponent<VirtualFleetPlatformBridge>();
+            if (!bridge.virtualFleetBridge)
+                bridge.virtualFleetBridge =
+                    platformHost.AddComponent<VirtualFleetPlatformBridge>();
+            UavUsv.VirtualFleetScenarioController scenario =
+                FindObjectOfType<UavUsv.VirtualFleetScenarioController>();
+            if (scenario)
+                bridge.virtualFleetBridge.Initialize(scenario);
 #endif
         }
 
@@ -103,13 +119,20 @@ namespace UavUsv.PlatformTools
                 return;
             }
 
+            string normalizedType = message.type.Trim();
+            if (virtualFleetBridge && virtualFleetBridge.CanHandle(normalizedType))
+            {
+                virtualFleetBridge.Receive(json);
+                return;
+            }
+
             if (!EnsureObserver())
             {
                 PostCameraResult(message.requestId, false, string.Empty, string.Empty, string.Empty, "Unity camera is not ready");
                 return;
             }
 
-            string type = message.type.Trim().ToLowerInvariant();
+            string type = normalizedType.ToLowerInvariant();
             VuePayload payload = message.payload ?? new VuePayload();
             switch (type)
             {
@@ -118,6 +141,9 @@ namespace UavUsv.PlatformTools
                     break;
                 case "focusdevice":
                     FocusDevice(message.requestId, payload.deviceCode);
+                    break;
+                case "setcameramode":
+                    SetCameraMode(message.requestId, payload.mode);
                     break;
                 case "switchcamera":
                     SwitchCamera(message.requestId, payload.mode);
@@ -158,8 +184,22 @@ namespace UavUsv.PlatformTools
             return vehicleController && vehicleController.EnsureScenario();
         }
 
-        private void SelectDevice(string requestId, string requestedCode)
+        [Preserve]
+        public void SelectDevice(string requestId, string requestedCode)
         {
+            if (!EnsureObserver())
+            {
+                PostCameraResult(
+                    requestId,
+                    false,
+                    requestedCode,
+                    "device-follow",
+                    string.Empty,
+                    "Unity camera is not ready"
+                );
+                return;
+            }
+
             bool success = observer.TrySelectDevice(
                 requestedCode,
                 out string code,
@@ -176,7 +216,26 @@ namespace UavUsv.PlatformTools
             );
         }
 
-        private void FocusDevice(string requestId, string requestedCode)
+        [Preserve]
+        public void SetCameraMode(string requestId, string requestedMode)
+        {
+            if (!EnsureObserver())
+            {
+                PostCameraResult(
+                    requestId,
+                    false,
+                    string.Empty,
+                    requestedMode,
+                    string.Empty,
+                    "Unity camera is not ready"
+                );
+                return;
+            }
+            SwitchCamera(requestId, requestedMode);
+        }
+
+        [Preserve]
+        public void FocusDevice(string requestId, string requestedCode)
         {
             if (!string.IsNullOrWhiteSpace(requestedCode))
             {
@@ -195,7 +254,8 @@ namespace UavUsv.PlatformTools
             );
         }
 
-        private void SwitchCamera(string requestId, string requestedMode)
+        [Preserve]
+        public void SwitchCamera(string requestId, string requestedMode)
         {
             string mode = string.IsNullOrWhiteSpace(requestedMode)
                 ? "overview"
@@ -268,8 +328,12 @@ namespace UavUsv.PlatformTools
         {
             string state = "ERROR";
             string detail = "Unity vehicle controller is not ready";
-            bool success = EnsureVehicleController() &&
-                vehicleController.TryExecute(command, deviceCode, out state, out detail);
+            bool handledByVirtualFleet = virtualFleetBridge &&
+                virtualFleetBridge.TryExecuteMissionCommand(command, out state, out detail);
+            bool success = handledByVirtualFleet
+                ? state != "ERROR"
+                : EnsureVehicleController() &&
+                    vehicleController.TryExecute(command, deviceCode, out state, out detail);
             var response = new ResponseEnvelope
             {
                 type = "commandAck",

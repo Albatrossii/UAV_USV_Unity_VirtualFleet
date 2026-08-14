@@ -16,6 +16,7 @@ namespace UavUsv
         private ExternalPoseWebSocketClient receiver;
         private RuntimeCollisionSafety collisionSafety;
         private MultiAgentCaptureDefenseScenario localScenario;
+        private VirtualFleetManager virtualFleet;
         private Transform[] statusUavs;
         private float[] statusUavHomeHeights;
         private GUIStyle titleStyle;
@@ -70,19 +71,17 @@ namespace UavUsv
             float[] usvYaw = { .10f, .05f, -.05f };
             Color usvRed = new Color(.86f, .035f, .025f);
 
-            var usvs = new Transform[3];
-            for (int i = 0; i < usvs.Length; i++)
-            {
-                usvs[i] = BuildUsv("usv_0" + (i + 1), usvRed);
-                Place(usvs[i], usvPos[i], usvYaw[i]);
-            }
-
-            var uavs = new Transform[3];
-            for (int i = 0; i < uavs.Length; i++)
-            {
-                uavs[i] = BuildUav("uav_0" + (i + 1));
-                PlaceUavOnPad(uavs[i], uavPads[i], .559f);
-            }
+            virtualFleet = gameObject.AddComponent<VirtualFleetManager>();
+            virtualFleet.ConfigureSpawnPoints(uavPads, usvPos, usvYaw);
+            virtualFleet.Initialize(
+                VirtualFleetManager.DefaultUavCount,
+                VirtualFleetManager.DefaultUsvCount
+            );
+            VirtualFleetScenarioController scenarioController =
+                gameObject.AddComponent<VirtualFleetScenarioController>();
+            scenarioController.Bind(virtualFleet);
+            Transform[] usvs = virtualFleet.GetUsvTransforms();
+            Transform[] uavs = virtualFleet.GetUavTransforms();
             statusUavs = uavs;
             statusUavHomeHeights = new float[uavs.Length];
             for (int i = 0; i < uavs.Length; i++)
@@ -371,7 +370,7 @@ namespace UavUsv
             Box("equipment_console", root, 5f, -4.8f, 9f, 3f, 1.5f, 1.6f, metal);
         }
 
-        private static Transform BuildUsv(string name, Color idColor)
+        public static Transform BuildVirtualUsv(string name, Color idColor)
         {
             Transform root = new GameObject(name).transform;
             root.localScale = Vector3.one;
@@ -532,7 +531,7 @@ namespace UavUsv
             return root;
         }
 
-        private static Transform BuildUav(string name)
+        public static Transform BuildVirtualUav(string name)
         {
             Transform root = new GameObject(name).transform;
             root.localScale = Vector3.one;
@@ -615,7 +614,7 @@ namespace UavUsv
             return root;
         }
 
-        private static void PlaceUavOnPad(
+        public static void PlaceVirtualUavOnPad(
             Transform uav,
             Transform pad,
             float yawRadians)
