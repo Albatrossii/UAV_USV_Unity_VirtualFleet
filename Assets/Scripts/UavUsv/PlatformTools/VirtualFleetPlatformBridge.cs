@@ -146,22 +146,27 @@ namespace UavUsv.PlatformTools
                 JsonUtility.FromJson<FrontendScenarioPayload>(json) ??
                 new FrontendScenarioPayload();
             long runId = ParseLong(input.runId, 1);
+            string algorithmCode = ResolveAlgorithm(
+                FirstNonEmpty(input.algorithmCode, input.scenarioId)
+            );
             HandleLoadScenario(new LoadScenarioMessage
             {
                 type = VirtualFleetMessageTypes.LoadScenario,
-                requestId = NewRequestId(VirtualFleetMessageTypes.LoadScenario),
+                requestId = FirstNonEmpty(
+                    input.requestId,
+                    NewRequestId(VirtualFleetMessageTypes.LoadScenario)
+                ),
                 timestamp = Now(),
                 payload = new VirtualFleetConfigPayload
                 {
-                    runtimeMode = VirtualFleetProtocol.RuntimeMode,
-                    algorithmCode = ResolveAlgorithm(input.scenarioId),
+                    runtimeMode = string.IsNullOrWhiteSpace(input.runtimeMode)
+                        ? VirtualFleetProtocol.RuntimeMode
+                        : input.runtimeMode,
+                    algorithmCode = algorithmCode,
                     runId = runId,
                     uavCount = input.uavCount > 0 ? input.uavCount : 3,
                     usvCount = input.usvCount > 0 ? input.usvCount : 3,
-                    targetCount = 1,
-                    formationType = string.IsNullOrWhiteSpace(input.formationType)
-                        ? VirtualFleetFormations.Encirclement
-                        : input.formationType,
+                    targetCount = input.targetCount > 0 ? input.targetCount : 1,
                     initialSpeedMps = input.initialSpeedMps,
                     initialHeadingDeg = input.initialHeadingDeg,
                     seed = input.seed
@@ -345,11 +350,16 @@ namespace UavUsv.PlatformTools
 
             if (currentConfig == null)
                 currentConfig = new UavUsv.VirtualFleetConfig();
+            currentConfig.runtimeMode = VirtualFleetProtocol.RuntimeMode;
+            currentConfig.algorithmCode = message.payload.algorithmCode;
             currentConfig.runId = message.payload.runId;
             currentConfig.uavCount = message.payload.uavCount;
             currentConfig.usvCount = message.payload.usvCount;
-            currentConfig.targetCount = VirtualFleetProtocol.FixedTargetCount;
-            currentConfig.formationType = ParseFormation(message.payload.formationType);
+            currentConfig.targetCount = message.payload.targetCount;
+            currentConfig.formationType = AutomaticFormation(message.payload.algorithmCode);
+            currentConfig.initialSpeedMps = message.payload.initialSpeedMps;
+            currentConfig.initialHeadingDeg = message.payload.initialHeadingDeg;
+            currentConfig.seed = message.payload.seed;
             currentRunId = currentConfig.runId;
             lastSequence = -1;
             runtime.Configure(currentConfig);
@@ -485,7 +495,7 @@ namespace UavUsv.PlatformTools
                 uavCount = payload.uavCount,
                 usvCount = payload.usvCount,
                 targetCount = payload.targetCount,
-                formationType = ParseFormation(payload.formationType),
+                formationType = AutomaticFormation(payload.algorithmCode),
                 initialSpeedMps = payload.initialSpeedMps,
                 initialHeadingDeg = payload.initialHeadingDeg,
                 seed = payload.seed
@@ -614,13 +624,16 @@ namespace UavUsv.PlatformTools
         [Serializable]
         private sealed class FrontendScenarioPayload
         {
+            public string requestId;
+            public string runtimeMode;
             public string runId;
             public string scenarioId;
+            public string algorithmCode;
             public string sceneName;
             public string coordinateSystem;
             public int uavCount;
             public int usvCount;
-            public string formationType;
+            public int targetCount;
             public float initialSpeedMps;
             public float initialHeadingDeg;
             public int seed;
@@ -637,19 +650,15 @@ namespace UavUsv.PlatformTools
             public string message;
         }
 
-        private static VirtualFleetFormationType ParseFormation(string value)
+        private static VirtualFleetFormationType AutomaticFormation(string algorithmCode)
         {
-            switch ((value ?? string.Empty).Trim().ToUpperInvariant())
-            {
-                case VirtualFleetFormations.Random:
-                    return VirtualFleetFormationType.Random;
-                case VirtualFleetFormations.Circle:
-                    return VirtualFleetFormationType.Circle;
-                case VirtualFleetFormations.Escort:
-                    return VirtualFleetFormationType.Escort;
-                default:
-                    return VirtualFleetFormationType.Encirclement;
-            }
+            return string.Equals(
+                algorithmCode,
+                VirtualFleetAlgorithms.Escort,
+                StringComparison.OrdinalIgnoreCase
+            )
+                ? VirtualFleetFormationType.Escort
+                : VirtualFleetFormationType.Encirclement;
         }
 
         private static string RequestId(VirtualFleetMessage message)
