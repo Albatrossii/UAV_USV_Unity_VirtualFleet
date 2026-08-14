@@ -17,6 +17,10 @@ namespace UavUsv
         private RuntimeCollisionSafety collisionSafety;
         private MultiAgentCaptureDefenseScenario localScenario;
         private VirtualFleetManager virtualFleet;
+        private ChaseCamera virtualFleetChaseCamera;
+        private SensorViewPip virtualFleetSensorPip;
+        private Transform virtualFleetFriendlyTarget;
+        private Transform virtualFleetEnemyTarget;
         private Transform[] statusUavs;
         private float[] statusUavHomeHeights;
         private GUIStyle titleStyle;
@@ -134,6 +138,46 @@ namespace UavUsv
 
             BuildCamera(usvs, uavs, friendly, enemy);
             localScenario = FindObjectOfType<MultiAgentCaptureDefenseScenario>();
+        }
+
+        private void OnDestroy()
+        {
+            if (virtualFleet)
+                virtualFleet.FleetChanged -= RefreshVirtualFleetCameraTargets;
+        }
+
+        private void RefreshVirtualFleetCameraTargets()
+        {
+            if (!virtualFleet)
+                return;
+
+            Transform[] usvs = virtualFleet.GetUsvTransforms();
+            Transform[] uavs = virtualFleet.GetUavTransforms();
+
+            if (virtualFleetChaseCamera)
+            {
+                if (usvs.Length > 0)
+                    virtualFleetChaseCamera.target = usvs[0];
+                if (uavs.Length > 0)
+                    virtualFleetChaseCamera.companion = uavs[0];
+
+                var subjects = new List<Transform>(
+                    usvs.Length + uavs.Length + 2
+                );
+                subjects.AddRange(usvs);
+                subjects.AddRange(uavs);
+                if (virtualFleetFriendlyTarget)
+                    subjects.Add(virtualFleetFriendlyTarget);
+                if (virtualFleetEnemyTarget)
+                    subjects.Add(virtualFleetEnemyTarget);
+                virtualFleetChaseCamera.SetGroupTargets(subjects.ToArray());
+            }
+
+            if (virtualFleetSensorPip)
+            {
+                virtualFleetSensorPip.usvs = usvs;
+                virtualFleetSensorPip.uavs = uavs;
+            }
         }
 
         private static void ConfigureVisualQuality()
@@ -703,6 +747,9 @@ namespace UavUsv
             go.transform.LookAt(PresentationEnu(-78f, -290f, 4f));
 
             ChaseCamera chase = go.AddComponent<ChaseCamera>();
+            // Keep device codes available for selection and bridge messages,
+            // but hide the dense world-space labels in large-fleet views.
+            chase.showAgentLabels = false;
             chase.target = usvs[0];
             chase.companion = uavs[0];
             chase.lookAt = enemy;
@@ -735,6 +782,11 @@ namespace UavUsv
             subjects.Add(friendly);
             subjects.Add(enemy);
             chase.SetGroupTargets(subjects.ToArray());
+            virtualFleetChaseCamera = chase;
+            virtualFleetFriendlyTarget = friendly;
+            virtualFleetEnemyTarget = enemy;
+            virtualFleet.FleetChanged -= RefreshVirtualFleetCameraTargets;
+            virtualFleet.FleetChanged += RefreshVirtualFleetCameraTargets;
 
             GazeboComparisonCamera comparison =
                 go.AddComponent<GazeboComparisonCamera>();
@@ -756,6 +808,7 @@ namespace UavUsv
             pip.usvCameraForward = UsvCameraForward;
             pip.uavCameraHeight = UavCameraHeight;
             pip.activeView = SensorViewPip.SensorView.Usv01Forward;
+            virtualFleetSensorPip = pip;
         }
 
         private void OnGUI()
