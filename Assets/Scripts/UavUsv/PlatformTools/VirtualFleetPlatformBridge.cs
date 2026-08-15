@@ -401,6 +401,7 @@ namespace UavUsv.PlatformTools
             lastSequence = message.payload.sequence;
             VirtualPoseBatchApplyResult applyResult =
                 runtime.ApplyPoseBatch(ToRuntimePoseBatch(message.payload));
+            UavUsv.VirtualFleetDeviceState trackedDevice = GetTrackedDeviceState("UAV-001");
             Emit(new PoseAppliedResponse
             {
                 type = "poseFrameApplied",
@@ -415,9 +416,74 @@ namespace UavUsv.PlatformTools
                     sequence = lastSequence,
                     appliedCount = applyResult.appliedCount,
                     missingDeviceCodes = applyResult.missingDeviceCodes ?? new string[0],
-                    unknownDeviceCodes = applyResult.unknownDeviceCodes ?? new string[0]
+                    unknownDeviceCodes = applyResult.unknownDeviceCodes ?? new string[0],
+                    trackedDeviceCode = trackedDevice != null
+                        ? trackedDevice.deviceCode
+                        : string.Empty,
+                    unityPositionX = trackedDevice != null
+                        ? trackedDevice.position.x
+                        : 0f,
+                    unityPositionY = trackedDevice != null
+                        ? trackedDevice.position.y
+                        : 0f,
+                    unityPositionZ = trackedDevice != null
+                        ? trackedDevice.position.z
+                        : 0f,
+                    unityHeadingDeg = trackedDevice != null
+                        ? NormalizeHeading(-trackedDevice.rotation.eulerAngles.y)
+                        : 0f,
+                    transformPositionX = trackedDevice != null &&
+                        trackedDevice.transform
+                        ? trackedDevice.transform.position.x
+                        : 0f,
+                    transformPositionY = trackedDevice != null &&
+                        trackedDevice.transform
+                        ? trackedDevice.transform.position.y
+                        : 0f,
+                    transformPositionZ = trackedDevice != null &&
+                        trackedDevice.transform
+                        ? trackedDevice.transform.position.z
+                        : 0f,
+                    transformHeadingDeg = trackedDevice != null &&
+                        trackedDevice.transform
+                        ? NormalizeHeading(-trackedDevice.transform.eulerAngles.y)
+                        : 0f
                 }
             });
+        }
+
+        private UavUsv.VirtualFleetDeviceState GetTrackedDeviceState(string deviceCode)
+        {
+            UavUsv.VirtualFleetScenarioController controller =
+                runtime as UavUsv.VirtualFleetScenarioController;
+            if (!controller)
+                return null;
+
+            UavUsv.VirtualFleetSnapshot snapshot = controller.GetSnapshot();
+            UavUsv.VirtualFleetDeviceState[] devices = snapshot != null
+                ? snapshot.devices
+                : null;
+            if (devices == null)
+                return null;
+
+            for (int i = 0; i < devices.Length; i++)
+            {
+                UavUsv.VirtualFleetDeviceState device = devices[i];
+                if (device != null &&
+                    string.Equals(
+                        device.deviceCode,
+                        deviceCode,
+                        StringComparison.OrdinalIgnoreCase
+                    ))
+                    return device;
+            }
+            return null;
+        }
+
+        private static float NormalizeHeading(float heading)
+        {
+            float normalized = heading % 360f;
+            return normalized < 0f ? normalized + 360f : normalized;
         }
 
         private void HandleMission(MissionCommandMessage message)
@@ -801,6 +867,15 @@ namespace UavUsv.PlatformTools
             public int appliedCount;
             public string[] missingDeviceCodes;
             public string[] unknownDeviceCodes;
+            public string trackedDeviceCode;
+            public float unityPositionX;
+            public float unityPositionY;
+            public float unityPositionZ;
+            public float unityHeadingDeg;
+            public float transformPositionX;
+            public float transformPositionY;
+            public float transformPositionZ;
+            public float transformHeadingDeg;
         }
 
         [Serializable]
