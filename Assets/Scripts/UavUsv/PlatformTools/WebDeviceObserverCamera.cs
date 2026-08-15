@@ -19,6 +19,7 @@ namespace UavUsv.PlatformTools
         }
 
         private readonly List<Transform> sceneTargets = new List<Transform>();
+        private readonly RaycastHit[] occlusionHits = new RaycastHit[16];
         private Camera observedCamera;
         private UavUsv.ChaseCamera chaseCamera;
         private UavUsv.VirtualFleetManager fleetManager;
@@ -184,6 +185,8 @@ namespace UavUsv.PlatformTools
             else
                 CalculateOverview(out desiredPosition, out focusPoint);
 
+            if (mode == ObservationMode.Device && selectedSubject)
+                desiredPosition = ResolveDeviceOcclusion(focusPoint, desiredPosition);
             desiredPosition.y = Mathf.Max(desiredPosition.y, 2.4f);
             Quaternion desiredRotation = Quaternion.LookRotation(
                 focusPoint - desiredPosition,
@@ -232,21 +235,58 @@ namespace UavUsv.PlatformTools
             }
 
             float distance = Mathf.Clamp(
-                Mathf.Max(14f, visualRadius * 2.35f),
-                14f,
-                28f
+                Mathf.Max(6f, visualRadius * 4f),
+                6f,
+                10f
             );
             float heightUsv = Mathf.Clamp(
-                Mathf.Max(visualTop + 3f, 5f),
-                7f,
-                14f
+                Mathf.Max(visualTop + 5f, 6f),
+                6f,
+                10f
             );
-            Vector3 subjectLook = subject +
-                forward * Mathf.Max(5.5f, visualRadius) +
-                Vector3.up * Mathf.Max(2.4f, visualCenterHeight);
-            position = subject - forward * distance + Vector3.up * heightUsv;
-            focus = subjectLook;
-            desiredFieldOfView = 52f;
+            focus = subject + Vector3.up * Mathf.Max(.35f, visualCenterHeight);
+            position = focus - forward * distance + Vector3.up * heightUsv;
+            desiredFieldOfView = 45f;
+        }
+
+        private Vector3 ResolveDeviceOcclusion(Vector3 focus, Vector3 desiredPosition)
+        {
+            Vector3 offset = desiredPosition - focus;
+            float distance = offset.magnitude;
+            if (distance < .1f)
+                return desiredPosition;
+
+            Vector3 direction = offset / distance;
+            int hitCount = Physics.SphereCastNonAlloc(
+                focus,
+                .3f,
+                direction,
+                occlusionHits,
+                distance,
+                ~0,
+                QueryTriggerInteraction.Ignore
+            );
+            float nearestObstacle = distance;
+            for (int i = 0; i < hitCount; i++)
+            {
+                Transform hitTransform = occlusionHits[i].transform;
+                if (!hitTransform || IsSelectedSubjectPart(hitTransform))
+                    continue;
+                nearestObstacle = Mathf.Min(nearestObstacle, occlusionHits[i].distance);
+            }
+
+            if (nearestObstacle >= distance)
+                return desiredPosition;
+            if (nearestObstacle <= 1.2f)
+                return focus + Vector3.up * 8f - direction * 1.5f;
+
+            return focus + direction * Mathf.Max(1.2f, nearestObstacle - .6f);
+        }
+
+        private bool IsSelectedSubjectPart(Transform candidate)
+        {
+            return selectedSubject &&
+                (candidate == selectedSubject || candidate.IsChildOf(selectedSubject));
         }
 
         private static void GetVisualMetrics(
