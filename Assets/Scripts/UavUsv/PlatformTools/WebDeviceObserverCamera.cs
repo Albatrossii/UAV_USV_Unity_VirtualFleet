@@ -20,6 +20,10 @@ namespace UavUsv.PlatformTools
 
         private readonly List<Transform> sceneTargets = new List<Transform>();
         private readonly RaycastHit[] occlusionHits = new RaycastHit[16];
+        private readonly Dictionary<Transform, LineRenderer> fleetTrails =
+            new Dictionary<Transform, LineRenderer>();
+        private readonly Dictionary<Transform, List<Vector3>> fleetTrailPoints =
+            new Dictionary<Transform, List<Vector3>>();
         private Camera observedCamera;
         private UavUsv.ChaseCamera chaseCamera;
         private UavUsv.VirtualFleetManager fleetManager;
@@ -27,6 +31,14 @@ namespace UavUsv.PlatformTools
         private Transform lighthouse;
         private ObservationMode mode;
         private float desiredFieldOfView = 52f;
+        private Transform trailRoot;
+        private Material uavTrailMaterial;
+        private Material usvTrailMaterial;
+        private float nextTrailSampleAt;
+
+        private const int MaxTrailPoints = 240;
+        private const float TrailSampleSeconds = .12f;
+        private const float TrailMinDistance = .08f;
 
         public string CurrentDeviceCode { get; private set; } = string.Empty;
         public string CurrentModeName => ModeName(mode);
@@ -175,6 +187,7 @@ namespace UavUsv.PlatformTools
                 return;
 
             RefreshSceneTargets();
+            UpdateFleetTrails();
             Vector3 desiredPosition;
             Vector3 focusPoint;
 
@@ -429,6 +442,7 @@ namespace UavUsv.PlatformTools
 
             AddFleetTargets(fleetManager.GetUavTransforms());
             AddFleetTargets(fleetManager.GetUsvTransforms());
+            SyncFleetTrails();
         }
 
         private void AddFleetTargets(Transform[] targets)
@@ -440,6 +454,120 @@ namespace UavUsv.PlatformTools
                 Transform target = targets[i];
                 if (target && !sceneTargets.Contains(target))
                     sceneTargets.Add(target);
+            }
+        }
+
+        private void SyncFleetTrails()
+        {
+            if (!trailRoot)
+            {
+                GameObject root = new GameObject("VirtualFleetTrails");
+                trailRoot = root.transform;
+                trailRoot.SetParent(transform, false);
+            }
+
+            HashSet<Transform> activeTargets = new HashSet<Transform>();
+            for (int i = 0; i < sceneTargets.Count; i++)
+            {
+                Transform target = sceneTargets[i];
+                if (!target || (!IsUav(target) && !IsUsv(target)))
+                    continue;
+
+                activeTargets.Add(target);
+                if (!fleetTrails.ContainsKey(target))
+                {
+                    GameObject trailObject = new GameObject(target.name + "-Trajectory");
+                    trailObject.transform.SetParent(trailRoot, false);
+                    LineRenderer line = trailObject.AddComponent<LineRenderer>();
+                    line.useWorldSpace = true;
+                    line.alignment = LineAlignment.View;
+                    line.textureMode = LineTextureMode.Stretch;
+                    line.numCapVertices = 3;
+                    line.numCornerVertices = 3;
+                    line.widthMultiplier = IsUav(target) ? .10f : .14f;
+                    line.material = GetTrailMaterial(IsUav(target)
+                        ? true
+                        : false);
+                    line.startColor = line.endColor = IsUav(target)
+                        ? new Color(.2f, .88f, 1f, .95f)
+                        : new Color(1f, .58f, .08f, .95f);
+                    fleetTrails.Add(target, line);
+                    fleetTrailPoints.Add(target, new List<Vector3>(MaxTrailPoints));
+                }
+            }
+
+            List<Transform> staleTargets = new List<Transform>();
+            foreach (KeyValuePair<Transform, LineRenderer> pair in fleetTrails)
+            {
+                if (!pair.Key || !activeTargets.Contains(pair.Key))
+                    staleTargets.Add(pair.Key);
+            }
+
+            for (int i = 0; i < staleTargets.Count; i++)
+            {
+                Transform stale = staleTargets[i];
+                if (fleetTrails.TryGetValue(stale, out LineRenderer line) && line)
+                    Destroy(line.gameObject);
+                fleetTrails.Remove(stale);
+                fleetTrailPoints.Remove(stale);
+            }
+        }
+
+        private Material GetTrailMaterial(bool isUav)
+        {
+            Material material = isUav
+                ? uavTrailMaterial
+                : usvTrailMaterial;
+            if (material)
+                return material;
+
+            Shader shader = Shader.Find("Sprites/Default");
+            if (!shader)
+                shader = Shader.Find("Unlit/Color");
+            material = new Material(shader)
+            {
+                name = "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV")
+            };
+            if (isUav)
+                uavTrailMaterial = material;
+            else
+                usvTrailMaterial = material;
+            return material;
+        }
+
+        private void UpdateFleetTrails()
+        {
+            if (Time.unscaledTime < nextTrailSampleAt)
+                return;
+            nextTrailSampleAt = Time.unscaledTime + TrailSampleSeconds;
+
+            bool visible = mode == ObservationMode.Overview;
+            foreach (KeyValuePair<Transform, LineRenderer> pair in fleetTrails)
+            {
+                Transform target = pair.Key;
+                LineRenderer line = pair.Value;
+                if (!target || !line || !fleetTrailPoints.TryGetValue(target, out List<Vector3> points))
+                    continue;
+
+                line.enabled = visible;
+
+                Vector3 point = target.position + Vector3.up * (IsUav(target) ? .08f : .18f);
+                if (points.Count == 0 ||
+                    Vector3.Distance(points[points.Count - 1], point) >= TrailMinDistance)
+                {
+                    points.Add(point);
+                    if (points.Count > MaxTrailPoints)
+                    {
+                        points.RemoveAt(0);
+                        line.positionCount = points.Count;
+                        line.SetPositions(points.ToArray());
+                    }
+                    else
+                    {
+                        line.positionCount = points.Count;
+                        line.SetPosition(points.Count - 1, point);
+                    }
+                }
             }
         }
 
@@ -507,6 +635,10 @@ namespace UavUsv.PlatformTools
         {
             if (chaseCamera)
                 chaseCamera.enabled = true;
+            if (uavTrailMaterial)
+                Destroy(uavTrailMaterial);
+            if (usvTrailMaterial)
+                Destroy(usvTrailMaterial);
         }
     }
 }
