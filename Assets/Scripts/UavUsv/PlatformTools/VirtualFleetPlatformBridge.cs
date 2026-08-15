@@ -10,6 +10,7 @@ namespace UavUsv.PlatformTools
     public sealed class VirtualFleetPlatformBridge : MonoBehaviour
     {
         private const string RuntimeNotReadyCode = "runtime_not_ready";
+        private static VirtualFleetPlatformBridge instance;
         private UavUsv.IVirtualFleetRuntime runtime;
         private UavUsv.VirtualFleetConfig currentConfig;
         private long currentRunId;
@@ -29,6 +30,17 @@ namespace UavUsv.PlatformTools
 
         private void Awake()
         {
+            if (instance && instance != this)
+            {
+                Debug.LogWarning(
+                    "[VirtualFleetPlatformBridge] Duplicate component removed from " +
+                    gameObject.name
+                );
+                Destroy(this);
+                return;
+            }
+
+            instance = this;
             TryFindRuntime();
             cameraBridge = FindObjectOfType<WebCommandBridge>();
         }
@@ -134,7 +146,10 @@ namespace UavUsv.PlatformTools
             HandleInitialize(new InitializePlatformMessage
             {
                 type = VirtualFleetMessageTypes.InitializePlatform,
-                requestId = NewRequestId(VirtualFleetMessageTypes.InitializePlatform),
+                requestId = FirstNonEmpty(
+                    payload.requestId,
+                    NewRequestId(VirtualFleetMessageTypes.InitializePlatform)
+                ),
                 timestamp = Now(),
                 payload = payload
             });
@@ -146,22 +161,27 @@ namespace UavUsv.PlatformTools
                 JsonUtility.FromJson<FrontendScenarioPayload>(json) ??
                 new FrontendScenarioPayload();
             long runId = ParseLong(input.runId, 1);
+            string algorithmCode = ResolveAlgorithm(
+                FirstNonEmpty(input.algorithmCode, input.scenarioId)
+            );
             HandleLoadScenario(new LoadScenarioMessage
             {
                 type = VirtualFleetMessageTypes.LoadScenario,
-                requestId = NewRequestId(VirtualFleetMessageTypes.LoadScenario),
+                requestId = FirstNonEmpty(
+                    input.requestId,
+                    NewRequestId(VirtualFleetMessageTypes.LoadScenario)
+                ),
                 timestamp = Now(),
                 payload = new VirtualFleetConfigPayload
                 {
-                    runtimeMode = VirtualFleetProtocol.RuntimeMode,
-                    algorithmCode = ResolveAlgorithm(input.scenarioId),
+                    runtimeMode = string.IsNullOrWhiteSpace(input.runtimeMode)
+                        ? VirtualFleetProtocol.RuntimeMode
+                        : input.runtimeMode,
+                    algorithmCode = algorithmCode,
                     runId = runId,
                     uavCount = input.uavCount > 0 ? input.uavCount : 3,
                     usvCount = input.usvCount > 0 ? input.usvCount : 3,
-                    targetCount = 1,
-                    formationType = string.IsNullOrWhiteSpace(input.formationType)
-                        ? VirtualFleetFormations.Encirclement
-                        : input.formationType,
+                    targetCount = input.targetCount > 0 ? input.targetCount : 1,
                     initialSpeedMps = input.initialSpeedMps,
                     initialHeadingDeg = input.initialHeadingDeg,
                     seed = input.seed
@@ -180,7 +200,10 @@ namespace UavUsv.PlatformTools
             HandlePoseBatch(new ApplyPoseBatchMessage
             {
                 type = VirtualFleetMessageTypes.ApplyPoseBatch,
-                requestId = NewRequestId(VirtualFleetMessageTypes.ApplyPoseBatch),
+                requestId = FirstNonEmpty(
+                    payload.requestId,
+                    NewRequestId(VirtualFleetMessageTypes.ApplyPoseBatch)
+                ),
                 timestamp = Now(),
                 payload = payload
             });
@@ -202,7 +225,7 @@ namespace UavUsv.PlatformTools
             HandleMission(new MissionCommandMessage
             {
                 type = command,
-                requestId = NewRequestId(command),
+                requestId = FirstNonEmpty(input.requestId, NewRequestId(command)),
                 timestamp = Now(),
                 payload = new MissionCommandPayload
                 {
@@ -285,7 +308,7 @@ namespace UavUsv.PlatformTools
             Emit(new PlatformReadyResponse
             {
                 type = "platformBridgeReady",
-                requestId = string.Empty,
+                requestId = RequestId(message),
                 timestamp = Now(),
                 payload = new PlatformReadyPayload
                 {
@@ -345,11 +368,16 @@ namespace UavUsv.PlatformTools
 
             if (currentConfig == null)
                 currentConfig = new UavUsv.VirtualFleetConfig();
+            currentConfig.runtimeMode = VirtualFleetProtocol.RuntimeMode;
+            currentConfig.algorithmCode = message.payload.algorithmCode;
             currentConfig.runId = message.payload.runId;
             currentConfig.uavCount = message.payload.uavCount;
             currentConfig.usvCount = message.payload.usvCount;
-            currentConfig.targetCount = VirtualFleetProtocol.FixedTargetCount;
-            currentConfig.formationType = ParseFormation(message.payload.formationType);
+            currentConfig.targetCount = message.payload.targetCount;
+            currentConfig.formationType = AutomaticFormation(message.payload.algorithmCode);
+            currentConfig.initialSpeedMps = message.payload.initialSpeedMps;
+            currentConfig.initialHeadingDeg = message.payload.initialHeadingDeg;
+            currentConfig.seed = message.payload.seed;
             currentRunId = currentConfig.runId;
             lastSequence = -1;
             runtime.Configure(currentConfig);
@@ -381,6 +409,8 @@ namespace UavUsv.PlatformTools
                 payload = new PoseAppliedPayload
                 {
                     success = applyResult.success,
+                    code = applyResult.code,
+                    message = applyResult.message,
                     runId = applyResult.runId,
                     sequence = lastSequence,
                     appliedCount = applyResult.appliedCount,
@@ -485,7 +515,7 @@ namespace UavUsv.PlatformTools
                 uavCount = payload.uavCount,
                 usvCount = payload.usvCount,
                 targetCount = payload.targetCount,
-                formationType = ParseFormation(payload.formationType),
+                formationType = AutomaticFormation(payload.algorithmCode),
                 initialSpeedMps = payload.initialSpeedMps,
                 initialHeadingDeg = payload.initialHeadingDeg,
                 seed = payload.seed
@@ -614,13 +644,16 @@ namespace UavUsv.PlatformTools
         [Serializable]
         private sealed class FrontendScenarioPayload
         {
+            public string requestId;
+            public string runtimeMode;
             public string runId;
             public string scenarioId;
+            public string algorithmCode;
             public string sceneName;
             public string coordinateSystem;
             public int uavCount;
             public int usvCount;
-            public string formationType;
+            public int targetCount;
             public float initialSpeedMps;
             public float initialHeadingDeg;
             public int seed;
@@ -629,6 +662,7 @@ namespace UavUsv.PlatformTools
         [Serializable]
         private sealed class FrontendMissionPayload
         {
+            public string requestId;
             public string runId;
             public long sequence;
             public string state;
@@ -637,19 +671,15 @@ namespace UavUsv.PlatformTools
             public string message;
         }
 
-        private static VirtualFleetFormationType ParseFormation(string value)
+        private static VirtualFleetFormationType AutomaticFormation(string algorithmCode)
         {
-            switch ((value ?? string.Empty).Trim().ToUpperInvariant())
-            {
-                case VirtualFleetFormations.Random:
-                    return VirtualFleetFormationType.Random;
-                case VirtualFleetFormations.Circle:
-                    return VirtualFleetFormationType.Circle;
-                case VirtualFleetFormations.Escort:
-                    return VirtualFleetFormationType.Escort;
-                default:
-                    return VirtualFleetFormationType.Encirclement;
-            }
+            return string.Equals(
+                algorithmCode,
+                VirtualFleetAlgorithms.Escort,
+                StringComparison.OrdinalIgnoreCase
+            )
+                ? VirtualFleetFormationType.Escort
+                : VirtualFleetFormationType.Encirclement;
         }
 
         private static string RequestId(VirtualFleetMessage message)
@@ -764,6 +794,8 @@ namespace UavUsv.PlatformTools
         private sealed class PoseAppliedPayload
         {
             public bool success;
+            public string code;
+            public string message;
             public long runId;
             public long sequence;
             public int appliedCount;
