@@ -20,6 +20,7 @@ namespace UavUsv.PlatformTools
     {
         public const string Version = "2.0";
         public const string RuntimeMode = "VIRTUAL_SIMULATION";
+        public const string GlobalCoordinateFrame = "GLOBAL_ENU";
         public const int MaxUavCount = 100;
         public const int MaxUsvCount = 100;
         public const int FixedTargetCount = 1;
@@ -120,6 +121,7 @@ namespace UavUsv.PlatformTools
     {
         public string requestId;
         public string runtimeMode;
+        public string coordinateFrame;
         public long runId;
         public long sequence;
         public long sampleTime;
