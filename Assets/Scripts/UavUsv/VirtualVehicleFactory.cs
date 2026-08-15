@@ -23,8 +23,10 @@ namespace UavUsv
         private readonly Vector3[] usvPositions;
         private readonly List<Vector3> uavSpawnPositions = new List<Vector3>();
         private readonly List<Vector3> usvSpawnPositions = new List<Vector3>();
+        private readonly List<Vector3> targetSpawnPositions = new List<Vector3>();
         private System.Random random;
         private Vector3 waterSpawnCenter;
+        private Transform targetTransform;
 
         public VirtualVehicleFactory(
             Transform[] uavPads,
@@ -42,6 +44,12 @@ namespace UavUsv
             random = new System.Random(seed);
             uavSpawnPositions.Clear();
             usvSpawnPositions.Clear();
+            targetSpawnPositions.Clear();
+        }
+
+        public void SetTargetTransform(Transform value)
+        {
+            targetTransform = value;
         }
 
         public Transform Create(VirtualFleetDeviceType type, string deviceCode, int index)
@@ -56,6 +64,21 @@ namespace UavUsv
                 );
                 uavSpawnPositions.Add(position);
                 return uav;
+            }
+
+            if (type == VirtualFleetDeviceType.Target)
+            {
+                Transform target = targetTransform;
+                if (!target)
+                    target = SimulationBootstrap.BuildVirtualTarget(deviceCode);
+                target.name = deviceCode;
+                Vector3 targetPosition = CreateRandomPosition(false, targetSpawnPositions);
+                target.SetPositionAndRotation(
+                    targetPosition,
+                    RandomRotation()
+                );
+                targetSpawnPositions.Add(targetPosition);
+                return target;
             }
 
             Transform usv = SimulationBootstrap.BuildVirtualUsv(

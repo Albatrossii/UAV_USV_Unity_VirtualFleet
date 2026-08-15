@@ -75,8 +75,14 @@ namespace UavUsv
             float[] usvYaw = { .10f, .05f, -.05f };
             Color usvRed = new Color(.86f, .035f, .025f);
 
+            Transform friendly = BuildFriendlyShip();
+            Place(friendly, PresentationEnu(-150f, -355f, 0f), .25f);
+            Transform enemy = BuildEnemyShip();
+            Place(enemy, PresentationEnu(-80f, -345f, 0f), 2.60f);
+
             virtualFleet = gameObject.AddComponent<VirtualFleetManager>();
             virtualFleet.ConfigureSpawnPoints(uavPads, usvPos, usvYaw);
+            virtualFleet.ConfigureTargetTransform(enemy);
             virtualFleet.Initialize(
                 VirtualFleetManager.DefaultUavCount,
                 VirtualFleetManager.DefaultUsvCount
@@ -90,11 +96,6 @@ namespace UavUsv
             statusUavHomeHeights = new float[uavs.Length];
             for (int i = 0; i < uavs.Length; i++)
                 statusUavHomeHeights[i] = uavs[i].position.y;
-
-            Transform friendly = BuildFriendlyShip();
-            Place(friendly, PresentationEnu(-150f, -355f, 0f), .25f);
-            Transform enemy = BuildEnemyShip();
-            Place(enemy, PresentationEnu(-80f, -345f, 0f), 2.60f);
 
             bool externalSync =
                 !HasArgument("--local-demo") &&
@@ -506,6 +507,13 @@ namespace UavUsv
             Box("port_stripe", root, -.2f, 2.42f, .92f, 9.8f, .08f, .35f, yellow);
             Box("starboard_stripe", root, -.2f, -2.42f, .92f, 9.8f, .08f, .35f, yellow);
             return root;
+        }
+
+        public static Transform BuildVirtualTarget(string name)
+        {
+            Transform target = BuildEnemyShip();
+            target.name = name;
+            return target;
         }
 
         private static Transform BuildEnemyShip()

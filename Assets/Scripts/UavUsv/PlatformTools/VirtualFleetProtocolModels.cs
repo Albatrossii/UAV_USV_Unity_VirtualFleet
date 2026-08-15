@@ -63,6 +63,7 @@ namespace UavUsv.PlatformTools
     [Serializable]
     public sealed class InitializePlatformPayload
     {
+        public string requestId;
         public string runtimeMode;
         public string protocolVersion;
         public string buildId;
@@ -117,6 +118,7 @@ namespace UavUsv.PlatformTools
     [Serializable]
     public sealed class VirtualPoseBatchPayload
     {
+        public string requestId;
         public string runtimeMode;
         public long runId;
         public long sequence;

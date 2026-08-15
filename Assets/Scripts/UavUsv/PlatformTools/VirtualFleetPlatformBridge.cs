@@ -10,6 +10,7 @@ namespace UavUsv.PlatformTools
     public sealed class VirtualFleetPlatformBridge : MonoBehaviour
     {
         private const string RuntimeNotReadyCode = "runtime_not_ready";
+        private static VirtualFleetPlatformBridge instance;
         private UavUsv.IVirtualFleetRuntime runtime;
         private UavUsv.VirtualFleetConfig currentConfig;
         private long currentRunId;
@@ -29,6 +30,17 @@ namespace UavUsv.PlatformTools
 
         private void Awake()
         {
+            if (instance && instance != this)
+            {
+                Debug.LogWarning(
+                    "[VirtualFleetPlatformBridge] Duplicate component removed from " +
+                    gameObject.name
+                );
+                Destroy(this);
+                return;
+            }
+
+            instance = this;
             TryFindRuntime();
             cameraBridge = FindObjectOfType<WebCommandBridge>();
         }
@@ -134,7 +146,10 @@ namespace UavUsv.PlatformTools
             HandleInitialize(new InitializePlatformMessage
             {
                 type = VirtualFleetMessageTypes.InitializePlatform,
-                requestId = NewRequestId(VirtualFleetMessageTypes.InitializePlatform),
+                requestId = FirstNonEmpty(
+                    payload.requestId,
+                    NewRequestId(VirtualFleetMessageTypes.InitializePlatform)
+                ),
                 timestamp = Now(),
                 payload = payload
             });
@@ -185,7 +200,10 @@ namespace UavUsv.PlatformTools
             HandlePoseBatch(new ApplyPoseBatchMessage
             {
                 type = VirtualFleetMessageTypes.ApplyPoseBatch,
-                requestId = NewRequestId(VirtualFleetMessageTypes.ApplyPoseBatch),
+                requestId = FirstNonEmpty(
+                    payload.requestId,
+                    NewRequestId(VirtualFleetMessageTypes.ApplyPoseBatch)
+                ),
                 timestamp = Now(),
                 payload = payload
             });
@@ -207,7 +225,7 @@ namespace UavUsv.PlatformTools
             HandleMission(new MissionCommandMessage
             {
                 type = command,
-                requestId = NewRequestId(command),
+                requestId = FirstNonEmpty(input.requestId, NewRequestId(command)),
                 timestamp = Now(),
                 payload = new MissionCommandPayload
                 {
@@ -290,7 +308,7 @@ namespace UavUsv.PlatformTools
             Emit(new PlatformReadyResponse
             {
                 type = "platformBridgeReady",
-                requestId = string.Empty,
+                requestId = RequestId(message),
                 timestamp = Now(),
                 payload = new PlatformReadyPayload
                 {
@@ -383,6 +401,7 @@ namespace UavUsv.PlatformTools
             lastSequence = message.payload.sequence;
             VirtualPoseBatchApplyResult applyResult =
                 runtime.ApplyPoseBatch(ToRuntimePoseBatch(message.payload));
+            UavUsv.VirtualFleetDeviceState trackedDevice = GetTrackedDeviceState("UAV-001");
             Emit(new PoseAppliedResponse
             {
                 type = "poseFrameApplied",
@@ -391,13 +410,80 @@ namespace UavUsv.PlatformTools
                 payload = new PoseAppliedPayload
                 {
                     success = applyResult.success,
+                    code = applyResult.code,
+                    message = applyResult.message,
                     runId = applyResult.runId,
                     sequence = lastSequence,
                     appliedCount = applyResult.appliedCount,
                     missingDeviceCodes = applyResult.missingDeviceCodes ?? new string[0],
-                    unknownDeviceCodes = applyResult.unknownDeviceCodes ?? new string[0]
+                    unknownDeviceCodes = applyResult.unknownDeviceCodes ?? new string[0],
+                    trackedDeviceCode = trackedDevice != null
+                        ? trackedDevice.deviceCode
+                        : string.Empty,
+                    unityPositionX = trackedDevice != null
+                        ? trackedDevice.position.x
+                        : 0f,
+                    unityPositionY = trackedDevice != null
+                        ? trackedDevice.position.y
+                        : 0f,
+                    unityPositionZ = trackedDevice != null
+                        ? trackedDevice.position.z
+                        : 0f,
+                    unityHeadingDeg = trackedDevice != null
+                        ? NormalizeHeading(-trackedDevice.rotation.eulerAngles.y)
+                        : 0f,
+                    transformPositionX = trackedDevice != null &&
+                        trackedDevice.transform
+                        ? trackedDevice.transform.position.x
+                        : 0f,
+                    transformPositionY = trackedDevice != null &&
+                        trackedDevice.transform
+                        ? trackedDevice.transform.position.y
+                        : 0f,
+                    transformPositionZ = trackedDevice != null &&
+                        trackedDevice.transform
+                        ? trackedDevice.transform.position.z
+                        : 0f,
+                    transformHeadingDeg = trackedDevice != null &&
+                        trackedDevice.transform
+                        ? NormalizeHeading(-trackedDevice.transform.eulerAngles.y)
+                        : 0f
                 }
             });
+        }
+
+        private UavUsv.VirtualFleetDeviceState GetTrackedDeviceState(string deviceCode)
+        {
+            UavUsv.VirtualFleetScenarioController controller =
+                runtime as UavUsv.VirtualFleetScenarioController;
+            if (!controller)
+                return null;
+
+            UavUsv.VirtualFleetSnapshot snapshot = controller.GetSnapshot();
+            UavUsv.VirtualFleetDeviceState[] devices = snapshot != null
+                ? snapshot.devices
+                : null;
+            if (devices == null)
+                return null;
+
+            for (int i = 0; i < devices.Length; i++)
+            {
+                UavUsv.VirtualFleetDeviceState device = devices[i];
+                if (device != null &&
+                    string.Equals(
+                        device.deviceCode,
+                        deviceCode,
+                        StringComparison.OrdinalIgnoreCase
+                    ))
+                    return device;
+            }
+            return null;
+        }
+
+        private static float NormalizeHeading(float heading)
+        {
+            float normalized = heading % 360f;
+            return normalized < 0f ? normalized + 360f : normalized;
         }
 
         private void HandleMission(MissionCommandMessage message)
@@ -642,6 +728,7 @@ namespace UavUsv.PlatformTools
         [Serializable]
         private sealed class FrontendMissionPayload
         {
+            public string requestId;
             public string runId;
             public long sequence;
             public string state;
@@ -773,11 +860,22 @@ namespace UavUsv.PlatformTools
         private sealed class PoseAppliedPayload
         {
             public bool success;
+            public string code;
+            public string message;
             public long runId;
             public long sequence;
             public int appliedCount;
             public string[] missingDeviceCodes;
             public string[] unknownDeviceCodes;
+            public string trackedDeviceCode;
+            public float unityPositionX;
+            public float unityPositionY;
+            public float unityPositionZ;
+            public float unityHeadingDeg;
+            public float transformPositionX;
+            public float transformPositionY;
+            public float transformPositionZ;
+            public float transformHeadingDeg;
         }
 
         [Serializable]

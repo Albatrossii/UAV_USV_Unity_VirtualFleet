@@ -54,20 +54,43 @@ namespace UavUsv.PlatformTools
         private WebDeviceObserverCamera observer;
         private WebVehicleCommandController vehicleController;
         private VirtualFleetPlatformBridge virtualFleetBridge;
+        private static WebCommandBridge instance;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
         private static extern void VueWebGlPostMessage(string message);
 #endif
 
+        private void Awake()
+        {
+            if (instance && instance != this)
+            {
+                Debug.LogWarning(
+                    "[WebCommandBridge] Duplicate component removed from " +
+                    gameObject.name
+                );
+                Destroy(this);
+                return;
+            }
+
+            instance = this;
+        }
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Install()
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
-            GameObject existing = GameObject.Find("WebCommandBridge");
-            GameObject host = existing ? existing : new GameObject("WebCommandBridge");
+            GameObject platformHost = GameObject.Find("PlatformBridge");
+            WebCommandBridge bridge = platformHost
+                ? platformHost.GetComponent<WebCommandBridge>()
+                : FindObjectOfType<WebCommandBridge>();
+            GameObject host = bridge
+                ? bridge.gameObject
+                : platformHost
+                    ? platformHost
+                    : new GameObject("PlatformBridge");
+            platformHost = host;
             DontDestroyOnLoad(host);
-            WebCommandBridge bridge = host.GetComponent<WebCommandBridge>();
             if (!bridge) bridge = host.AddComponent<WebCommandBridge>();
             WebVehicleCommandController controller = host.GetComponent<WebVehicleCommandController>();
             if (!controller) controller = host.AddComponent<WebVehicleCommandController>();
@@ -76,10 +99,6 @@ namespace UavUsv.PlatformTools
             telemetry.Initialize(controller);
             bridge.vehicleController = controller;
 
-            GameObject platformExisting = GameObject.Find("PlatformBridge");
-            GameObject platformHost = platformExisting
-                ? platformExisting
-                : new GameObject("PlatformBridge");
             DontDestroyOnLoad(platformHost);
             bridge.virtualFleetBridge =
                 platformHost.GetComponent<VirtualFleetPlatformBridge>();

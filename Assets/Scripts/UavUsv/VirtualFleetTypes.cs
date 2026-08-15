@@ -22,7 +22,8 @@ namespace UavUsv
     public enum VirtualFleetDeviceType
     {
         Uav,
-        Usv
+        Usv,
+        Target
     }
 
     [Serializable]

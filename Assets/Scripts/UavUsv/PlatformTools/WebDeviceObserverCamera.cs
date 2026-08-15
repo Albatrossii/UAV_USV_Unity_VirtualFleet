@@ -203,10 +203,6 @@ namespace UavUsv.PlatformTools
 
         private void CalculateDeviceView(out Vector3 position, out Vector3 focus)
         {
-            Vector3 groupCenter;
-            float spread;
-            CalculateGroupFrame(out groupCenter, out spread);
-
             Vector3 forward = DeviceForward(selectedSubject);
             Vector3 subject = selectedSubject.position;
             GetVisualMetrics(
@@ -218,42 +214,39 @@ namespace UavUsv.PlatformTools
             if (IsUav(selectedSubject))
             {
                 float height = Mathf.Clamp(
-                    Mathf.Max(25f + spread * .22f, visualTop + 18f),
-                    25f,
-                    60f
+                    Mathf.Max(visualTop + 5f, 6f),
+                    6f,
+                    14f
                 );
                 float back = Mathf.Clamp(
-                    Mathf.Max(8f + spread * .055f, visualRadius * 2.1f),
+                    Mathf.Max(visualRadius * 3.2f, 8f),
                     8f,
-                    24f
+                    14f
                 );
                 position = subject - forward * back + Vector3.up * height;
-                focus = Vector3.Lerp(subject, groupCenter, .72f) +
-                    Vector3.up * Mathf.Max(1.2f, visualCenterHeight);
-                desiredFieldOfView = Mathf.Clamp(55f + spread * .16f, 55f, 72f);
+                focus = subject +
+                    forward * Mathf.Max(2f, visualRadius * 1.5f) +
+                    Vector3.up * Mathf.Max(.8f, visualCenterHeight);
+                desiredFieldOfView = 45f;
                 return;
             }
 
             float distance = Mathf.Clamp(
-                Mathf.Max(14f + spread * .31f, visualRadius * 2.35f),
+                Mathf.Max(14f, visualRadius * 2.35f),
                 14f,
-                48f
+                28f
             );
             float heightUsv = Mathf.Clamp(
-                Mathf.Max(7f + spread * .095f, visualTop + 4f),
+                Mathf.Max(visualTop + 3f, 5f),
                 7f,
-                24f
+                14f
             );
             Vector3 subjectLook = subject +
                 forward * Mathf.Max(5.5f, visualRadius) +
                 Vector3.up * Mathf.Max(2.4f, visualCenterHeight);
             position = subject - forward * distance + Vector3.up * heightUsv;
-            focus = Vector3.Lerp(
-                subjectLook,
-                groupCenter + Vector3.up * Mathf.Max(2.2f, visualCenterHeight),
-                .56f
-            );
-            desiredFieldOfView = Mathf.Clamp(52f + spread * .2f, 52f, 72f);
+            focus = subjectLook;
+            desiredFieldOfView = 52f;
         }
 
         private static void GetVisualMetrics(
@@ -366,6 +359,9 @@ namespace UavUsv.PlatformTools
         private void RefreshSceneTargets()
         {
             sceneTargets.Clear();
+            if (!fleetManager)
+                fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
+
             if (!chaseCamera)
                 chaseCamera = GetComponent<UavUsv.ChaseCamera>();
             if (chaseCamera)
@@ -376,14 +372,18 @@ namespace UavUsv.PlatformTools
                 {
                     for (int i = 0; i < targets.Length; i++)
                     {
-                        if (targets[i] && !sceneTargets.Contains(targets[i]))
+                        // The virtual fleet scene shares the legacy camera
+                        // director with the demo scene. Once a fleet manager
+                        // exists, only fleet devices belong in the overview
+                        // bounds; legacy mission ships can be far away.
+                        if (!fleetManager &&
+                            targets[i] &&
+                            !sceneTargets.Contains(targets[i]))
                             sceneTargets.Add(targets[i]);
                     }
                 }
             }
 
-            if (!fleetManager)
-                fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
             if (!fleetManager)
                 return;
 
