@@ -266,7 +266,7 @@ namespace UavUsv
             );
             Quaternion rotation = Quaternion.Euler(
                 0f,
-                -NormalizeHeading(pose.headingDeg),
+                NormalizeHeading(pose.headingDeg) - 90f,
                 0f
             );
             bool applied = target
