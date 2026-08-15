@@ -10,6 +10,7 @@ namespace UavUsv.PlatformTools
     public sealed class VirtualFleetPlatformBridge : MonoBehaviour
     {
         private const string RuntimeNotReadyCode = "runtime_not_ready";
+        private static VirtualFleetPlatformBridge instance;
         private UavUsv.IVirtualFleetRuntime runtime;
         private UavUsv.VirtualFleetConfig currentConfig;
         private long currentRunId;
@@ -29,6 +30,17 @@ namespace UavUsv.PlatformTools
 
         private void Awake()
         {
+            if (instance && instance != this)
+            {
+                Debug.LogWarning(
+                    "[VirtualFleetPlatformBridge] Duplicate component removed from " +
+                    gameObject.name
+                );
+                Destroy(this);
+                return;
+            }
+
+            instance = this;
             TryFindRuntime();
             cameraBridge = FindObjectOfType<WebCommandBridge>();
         }
