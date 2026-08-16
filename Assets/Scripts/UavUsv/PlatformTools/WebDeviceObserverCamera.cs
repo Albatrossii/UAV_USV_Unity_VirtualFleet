@@ -483,13 +483,16 @@ namespace UavUsv.PlatformTools
                     line.textureMode = LineTextureMode.Stretch;
                     line.numCapVertices = 3;
                     line.numCornerVertices = 3;
-                    line.widthMultiplier = IsUav(target) ? .10f : .14f;
-                    line.material = GetTrailMaterial(IsUav(target)
-                        ? true
-                        : false);
-                    line.startColor = line.endColor = IsUav(target)
+                    bool isUav = IsUav(target);
+                    Color trailColor = isUav
                         ? new Color(.2f, .88f, 1f, .95f)
                         : new Color(1f, .58f, .08f, .95f);
+                    line.widthMultiplier = isUav ? .26f : .32f;
+                    line.sharedMaterial = GetTrailMaterial(isUav);
+                    line.startColor = line.endColor = trailColor;
+                    line.shadowCastingMode =
+                        UnityEngine.Rendering.ShadowCastingMode.Off;
+                    line.receiveShadows = false;
                     fleetTrails.Add(target, line);
                     fleetTrailPoints.Add(target, new List<Vector3>(MaxTrailPoints));
                 }
@@ -520,26 +523,15 @@ namespace UavUsv.PlatformTools
             if (material)
                 return material;
 
-            Material runtimeStandard = Resources.Load<Material>("RuntimeStandard");
-            if (runtimeStandard)
-            {
-                material = new Material(runtimeStandard)
-                {
-                    name = "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV")
-                };
-            }
-            else
-            {
-                Shader shader = Shader.Find("Standard");
-                if (!shader)
-                    shader = Shader.Find("Legacy Shaders/Diffuse");
-                if (!shader)
-                    return null;
-                material = new Material(shader)
-                {
-                    name = "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV")
-                };
-            }
+            Color trailColor = isUav
+                ? new Color(.2f, .88f, 1f, .95f)
+                : new Color(1f, .58f, .08f, .95f);
+            material = SceneFactory.Material(
+                "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV"),
+                trailColor,
+                0f,
+                .5f
+            );
             if (isUav)
                 uavTrailMaterial = material;
             else
