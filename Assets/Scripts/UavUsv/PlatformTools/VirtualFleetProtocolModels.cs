@@ -18,8 +18,9 @@ namespace UavUsv.PlatformTools
 
     public static class VirtualFleetProtocol
     {
-        public const string Version = "1.0";
+        public const string Version = "2.0";
         public const string RuntimeMode = "VIRTUAL_SIMULATION";
+        public const string GlobalCoordinateFrame = "GLOBAL_ENU";
         public const int MaxUavCount = 100;
         public const int MaxUsvCount = 100;
         public const int FixedTargetCount = 1;
@@ -34,22 +35,6 @@ namespace UavUsv.PlatformTools
         {
             return string.Equals(algorithmCode, Capture, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(algorithmCode, Escort, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    public static class VirtualFleetFormations
-    {
-        public const string Random = "RANDOM";
-        public const string Circle = "CIRCLE";
-        public const string Encirclement = "ENCIRCLEMENT";
-        public const string Escort = "ESCORT";
-
-        public static bool IsSupported(string formationType)
-        {
-            return string.Equals(formationType, Random, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(formationType, Circle, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(formationType, Encirclement, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(formationType, Escort, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -79,6 +64,7 @@ namespace UavUsv.PlatformTools
     [Serializable]
     public sealed class InitializePlatformPayload
     {
+        public string requestId;
         public string runtimeMode;
         public string protocolVersion;
         public string buildId;
@@ -99,7 +85,6 @@ namespace UavUsv.PlatformTools
         public int uavCount;
         public int usvCount;
         public int targetCount;
-        public string formationType;
         public float initialSpeedMps;
         public float initialHeadingDeg;
         public int seed;
@@ -114,10 +99,14 @@ namespace UavUsv.PlatformTools
     [Serializable]
     public sealed class RegenerateScenarioPayload
     {
+        public string runtimeMode;
+        public string algorithmCode;
         public long runId;
         public int uavCount;
         public int usvCount;
-        public string formationType;
+        public int targetCount;
+        public float initialSpeedMps;
+        public float initialHeadingDeg;
         public int seed;
     }
 
@@ -130,7 +119,9 @@ namespace UavUsv.PlatformTools
     [Serializable]
     public sealed class VirtualPoseBatchPayload
     {
+        public string requestId;
         public string runtimeMode;
+        public string coordinateFrame;
         public long runId;
         public long sequence;
         public long sampleTime;

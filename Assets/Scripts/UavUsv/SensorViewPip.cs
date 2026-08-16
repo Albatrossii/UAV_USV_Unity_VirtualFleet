@@ -74,6 +74,9 @@ namespace UavUsv
 
         private void Awake()
         {
+            if (Application.platform == RuntimePlatform.WebGLPlayer)
+                return;
+
             EnsureResources();
         }
 
@@ -96,6 +99,9 @@ namespace UavUsv
 
         private void LateUpdate()
         {
+            if (Application.platform == RuntimePlatform.WebGLPlayer)
+                return;
+
             HandleHotkeys();
             if (!visible)
                 return;
@@ -109,6 +115,9 @@ namespace UavUsv
 
         private void OnGUI()
         {
+            if (Application.platform == RuntimePlatform.WebGLPlayer)
+                return;
+
             float uiScale = RuntimeGuiScale();
             if (!visible)
             {

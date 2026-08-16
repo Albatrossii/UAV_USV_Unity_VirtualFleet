@@ -52,7 +52,8 @@ namespace UavUsv
 
             fleetManager.Initialize(
                 CurrentConfig.uavCount,
-                CurrentConfig.usvCount
+                CurrentConfig.usvCount,
+                CurrentConfig.seed
             );
             LastAppliedSequence = -1;
         }
@@ -89,35 +90,28 @@ namespace UavUsv
             );
             for (int i = 0; i < poses.Length; i++)
             {
-                VirtualPose pose = poses[i];
-                if (pose == null || !pose.valid || string.IsNullOrWhiteSpace(pose.deviceCode))
-                    continue;
-                string code = pose.deviceCode.Trim();
-                if (!seen.Add(code))
-                    continue;
-                VirtualFleetDeviceState known = FindState(code);
-                if (known == null)
-                {
-                    unknown.Add(code);
-                    continue;
-                }
+                applied += ApplyPose(
+                    poses[i],
+                    false,
+                    seen,
+                    unknown
+                );
+            }
 
-                Vector3 position = Coordinates.ToPresentation(
-                    pose.eastM,
-                    pose.northM,
-                    pose.upM
+            VirtualPose[] targetPoses = batch.targets ?? new VirtualPose[0];
+            for (int i = 0; i < targetPoses.Length; i++)
+            {
+                applied += ApplyPose(
+                    targetPoses[i],
+                    true,
+                    seen,
+                    unknown
                 );
-                Quaternion rotation = Quaternion.Euler(
-                    0f,
-                    -NormalizeHeading(pose.headingDeg),
-                    0f
-                );
-                if (fleetManager.TryApplyPose(code, position, rotation, pose.state))
-                    applied++;
             }
 
             AddMissingCodes(missing, fleetManager.Uavs, seen);
             AddMissingCodes(missing, fleetManager.Usvs, seen);
+            AddMissingCodes(missing, fleetManager.Targets, seen);
             LastAppliedSequence = batch.sequence;
             result.success = true;
             result.code = "ok";
@@ -146,6 +140,16 @@ namespace UavUsv
         public bool RemoveUsv(string deviceCode)
         {
             return fleetManager && fleetManager.RemoveUsv(deviceCode);
+        }
+
+        public bool TryApplyTargetPose(
+            string deviceCode,
+            Vector3 position,
+            Quaternion rotation,
+            string status)
+        {
+            return fleetManager &&
+                fleetManager.TryApplyTargetPose(deviceCode, position, rotation, status);
         }
 
         public void StartMission()
@@ -229,7 +233,46 @@ namespace UavUsv
             for (int i = 0; i < fleetManager.Usvs.Count; i++)
                 if (string.Equals(fleetManager.Usvs[i].deviceCode, deviceCode, StringComparison.OrdinalIgnoreCase))
                     return fleetManager.Usvs[i];
+            for (int i = 0; i < fleetManager.Targets.Count; i++)
+                if (string.Equals(fleetManager.Targets[i].deviceCode, deviceCode, StringComparison.OrdinalIgnoreCase))
+                    return fleetManager.Targets[i];
             return null;
+        }
+
+        private int ApplyPose(
+            VirtualPose pose,
+            bool target,
+            System.Collections.Generic.HashSet<string> seen,
+            System.Collections.Generic.List<string> unknown)
+        {
+            if (pose == null || !pose.valid || string.IsNullOrWhiteSpace(pose.deviceCode))
+                return 0;
+
+            string code = pose.deviceCode.Trim();
+            if (!seen.Add(code))
+                return 0;
+
+            VirtualFleetDeviceState known = FindState(code);
+            if (known == null)
+            {
+                unknown.Add(code);
+                return 0;
+            }
+
+            Vector3 position = Coordinates.ToPresentation(
+                pose.eastM,
+                pose.northM,
+                pose.upM
+            );
+            Quaternion rotation = Quaternion.Euler(
+                0f,
+                NormalizeHeading(pose.headingDeg) - 90f,
+                0f
+            );
+            bool applied = target
+                ? TryApplyTargetPose(code, position, rotation, pose.state)
+                : fleetManager.TryApplyPose(code, position, rotation, pose.state);
+            return applied ? 1 : 0;
         }
 
         private static void AddMissingCodes(

@@ -14,19 +14,26 @@ namespace UavUsv
         public const int DefaultUsvCount = 3;
         public const int MaximumUavCount = 100;
         public const int MaximumUsvCount = 100;
+        public const int DefaultRandomSeed = 20260814;
 
         private readonly List<VirtualFleetDeviceState> uavs = new List<VirtualFleetDeviceState>();
         private readonly List<VirtualFleetDeviceState> usvs = new List<VirtualFleetDeviceState>();
+        private readonly List<VirtualFleetDeviceState> targets = new List<VirtualFleetDeviceState>();
         private int nextUavNumber = 1;
         private int nextUsvNumber = 1;
+        private int currentRandomSeed = DefaultRandomSeed;
         private VirtualVehicleFactory factory;
+        private Transform externalTargetTransform;
         private VirtualFleetMissionState missionState = VirtualFleetMissionState.Stopped;
 
         public VirtualFleetMissionState MissionState => missionState;
         public int UavCount => uavs.Count;
         public int UsvCount => usvs.Count;
+        public int TargetCount => targets.Count;
+        public int CurrentRandomSeed => currentRandomSeed;
         public IReadOnlyList<VirtualFleetDeviceState> Uavs => uavs;
         public IReadOnlyList<VirtualFleetDeviceState> Usvs => usvs;
+        public IReadOnlyList<VirtualFleetDeviceState> Targets => targets;
         public bool CanModifyFleet =>
             missionState == VirtualFleetMissionState.Stopped ||
             missionState == VirtualFleetMissionState.Reset;
@@ -42,7 +49,18 @@ namespace UavUsv
             factory = new VirtualVehicleFactory(uavPads, usvPositions, usvYaws);
         }
 
-        public void Initialize(int uavCount = DefaultUavCount, int usvCount = DefaultUsvCount)
+        public void ConfigureTargetTransform(Transform targetTransform)
+        {
+            externalTargetTransform = targetTransform;
+            if (factory == null)
+                factory = new VirtualVehicleFactory(null, null, null);
+            factory.SetTargetTransform(targetTransform);
+        }
+
+        public void Initialize(
+            int uavCount = DefaultUavCount,
+            int usvCount = DefaultUsvCount,
+            int seed = DefaultRandomSeed)
         {
             if (!CanModifyFleet)
                 return;
@@ -50,12 +68,15 @@ namespace UavUsv
             ClearFleet();
             if (factory == null)
                 factory = new VirtualVehicleFactory(null, null, null);
+            currentRandomSeed = seed == 0 ? DefaultRandomSeed : seed;
+            factory.ResetRandom(currentRandomSeed);
             nextUavNumber = 1;
             nextUsvNumber = 1;
             for (int i = 0; i < Mathf.Clamp(uavCount, 1, MaximumUavCount); i++)
                 AddUavInternal();
             for (int i = 0; i < Mathf.Clamp(usvCount, 1, MaximumUsvCount); i++)
                 AddUsvInternal();
+            AddTargetInternal();
             NotifyFleetChanged();
         }
 
@@ -75,6 +96,18 @@ namespace UavUsv
             if (!string.IsNullOrWhiteSpace(status))
                 state.status = status.Trim().ToUpperInvariant();
             return true;
+        }
+
+        public bool TryApplyTargetPose(
+            string deviceCode,
+            Vector3 position,
+            Quaternion rotation,
+            string status)
+        {
+            if (string.IsNullOrWhiteSpace(deviceCode) ||
+                !deviceCode.Trim().StartsWith("TARGET-", StringComparison.OrdinalIgnoreCase))
+                return false;
+            return TryApplyPose(deviceCode, position, rotation, status);
         }
 
         public Transform[] GetUavTransforms()
@@ -142,16 +175,20 @@ namespace UavUsv
             SetMissionState(VirtualFleetMissionState.Reset);
             Initialize(
                 Mathf.Max(1, uavs.Count),
-                Mathf.Max(1, usvs.Count)
+                Mathf.Max(1, usvs.Count),
+                currentRandomSeed
             );
             SetMissionState(VirtualFleetMissionState.Stopped);
         }
 
         public VirtualFleetSnapshot GetSnapshot()
         {
-            var all = new List<VirtualFleetDeviceState>(uavs.Count + usvs.Count);
+            var all = new List<VirtualFleetDeviceState>(
+                uavs.Count + usvs.Count + targets.Count
+            );
             all.AddRange(uavs);
             all.AddRange(usvs);
+            all.AddRange(targets);
             return new VirtualFleetSnapshot
             {
                 missionState = missionState.ToString().ToUpperInvariant(),
@@ -173,6 +210,17 @@ namespace UavUsv
             nextUsvNumber++;
             Transform model = factory.Create(VirtualFleetDeviceType.Usv, code, usvs.Count);
             usvs.Add(CreateState(code, "USV", model));
+        }
+
+        private void AddTargetInternal()
+        {
+            const string code = "TARGET-001";
+            Transform model = factory.Create(
+                VirtualFleetDeviceType.Target,
+                code,
+                targets.Count
+            );
+            targets.Add(CreateState(code, "TARGET", model));
         }
 
         private static VirtualFleetDeviceState CreateState(
@@ -213,8 +261,13 @@ namespace UavUsv
                 if (uavs[i].transform) Destroy(uavs[i].transform.gameObject);
             for (int i = 0; i < usvs.Count; i++)
                 if (usvs[i].transform) Destroy(usvs[i].transform.gameObject);
+            for (int i = 0; i < targets.Count; i++)
+                if (targets[i].transform &&
+                    targets[i].transform != externalTargetTransform)
+                    Destroy(targets[i].transform.gameObject);
             uavs.Clear();
             usvs.Clear();
+            targets.Clear();
         }
 
         private void SetMissionState(VirtualFleetMissionState nextState)
@@ -226,6 +279,8 @@ namespace UavUsv
                 uavs[i].status = nextState.ToString().ToUpperInvariant();
             for (int i = 0; i < usvs.Count; i++)
                 usvs[i].status = nextState.ToString().ToUpperInvariant();
+            for (int i = 0; i < targets.Count; i++)
+                targets[i].status = nextState.ToString().ToUpperInvariant();
             MissionStateChanged?.Invoke(missionState);
         }
 
@@ -245,6 +300,9 @@ namespace UavUsv
             for (int i = 0; i < usvs.Count; i++)
                 if (string.Equals(usvs[i].deviceCode, normalized, StringComparison.OrdinalIgnoreCase))
                     return usvs[i];
+            for (int i = 0; i < targets.Count; i++)
+                if (string.Equals(targets[i].deviceCode, normalized, StringComparison.OrdinalIgnoreCase))
+                    return targets[i];
             return null;
         }
 
