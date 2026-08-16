@@ -55,6 +55,10 @@ namespace UavUsv.PlatformTools
         private WebVehicleCommandController vehicleController;
         private VirtualFleetPlatformBridge virtualFleetBridge;
         private static WebCommandBridge instance;
+        private string lastCameraCommandKey = string.Empty;
+        private float lastCameraCommandAt = -1f;
+
+        private const float DuplicateCameraCommandWindow = .35f;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -190,6 +194,25 @@ namespace UavUsv.PlatformTools
             return true;
         }
 
+        [ContextMenu("Set Web Overview")]
+        private void SetWebOverviewForTesting()
+        {
+            if (!EnsureObserver())
+            {
+                Debug.LogWarning(
+                    "[WebCommandBridge] Web overview is unavailable because " +
+                    "the main camera is not ready."
+                );
+                return;
+            }
+
+            observer.SetOverview();
+            Debug.Log(
+                "[WebCommandBridge] WebDeviceObserverCamera set to overview " +
+                "for manual testing."
+            );
+        }
+
         private bool EnsureVehicleController()
         {
             if (!vehicleController)
@@ -201,6 +224,19 @@ namespace UavUsv.PlatformTools
                 telemetry = gameObject.AddComponent<WebTrajectoryTelemetryBridge>();
             telemetry.Initialize(vehicleController);
             return vehicleController && vehicleController.EnsureScenario();
+        }
+
+        [Preserve]
+        public void SelectDevice(string json)
+        {
+            VueMessage message = ParseVueMessage(json);
+            VuePayload payload = message != null && message.payload != null
+                ? message.payload
+                : new VuePayload();
+            SelectDevice(
+                message != null ? message.requestId : string.Empty,
+                payload.deviceCode
+            );
         }
 
         [Preserve]
@@ -236,8 +272,33 @@ namespace UavUsv.PlatformTools
         }
 
         [Preserve]
+        public void SetCameraMode(string json)
+        {
+            VueMessage message = ParseVueMessage(json);
+            VuePayload payload = message != null && message.payload != null
+                ? message.payload
+                : new VuePayload();
+            SetCameraMode(
+                message != null ? message.requestId : string.Empty,
+                payload.mode
+            );
+        }
+
+        [Preserve]
         public void SetCameraMode(string requestId, string requestedMode)
         {
+            string normalizedMode = string.IsNullOrWhiteSpace(requestedMode)
+                ? "overview"
+                : requestedMode.Trim().ToLowerInvariant();
+            string selectedCode = observer ? observer.CurrentDeviceCode : string.Empty;
+            string commandKey = normalizedMode + "|" + selectedCode;
+            if (string.Equals(commandKey, lastCameraCommandKey, StringComparison.Ordinal) &&
+                Time.unscaledTime - lastCameraCommandAt <
+                DuplicateCameraCommandWindow)
+                return;
+
+            lastCameraCommandKey = commandKey;
+            lastCameraCommandAt = Time.unscaledTime;
             if (!EnsureObserver())
             {
                 PostCameraResult(
@@ -250,7 +311,46 @@ namespace UavUsv.PlatformTools
                 );
                 return;
             }
-            SwitchCamera(requestId, requestedMode);
+            SwitchCamera(requestId, normalizedMode);
+        }
+
+        private static VueMessage ParseVueMessage(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return new VueMessage { payload = new VuePayload() };
+
+            try
+            {
+                VueMessage message = JsonUtility.FromJson<VueMessage>(json);
+                if (message != null && message.payload != null)
+                    return message;
+
+                DirectCameraMessage direct =
+                    JsonUtility.FromJson<DirectCameraMessage>(json);
+                return direct == null
+                    ? new VueMessage { payload = new VuePayload() }
+                    : new VueMessage
+                    {
+                        requestId = direct.requestId,
+                        payload = new VuePayload
+                        {
+                            deviceCode = direct.deviceCode,
+                            mode = direct.mode
+                        }
+                    };
+            }
+            catch
+            {
+                return new VueMessage { payload = new VuePayload() };
+            }
+        }
+
+        [Serializable]
+        private sealed class DirectCameraMessage
+        {
+            public string requestId;
+            public string deviceCode;
+            public string mode;
         }
 
         [Preserve]
