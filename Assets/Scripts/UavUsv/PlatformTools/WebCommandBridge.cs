@@ -204,6 +204,19 @@ namespace UavUsv.PlatformTools
         }
 
         [Preserve]
+        public void SelectDevice(string json)
+        {
+            VueMessage message = ParseVueMessage(json);
+            VuePayload payload = message != null && message.payload != null
+                ? message.payload
+                : new VuePayload();
+            SelectDevice(
+                message != null ? message.requestId : string.Empty,
+                payload.deviceCode
+            );
+        }
+
+        [Preserve]
         public void SelectDevice(string requestId, string requestedCode)
         {
             if (!EnsureObserver())
@@ -236,6 +249,19 @@ namespace UavUsv.PlatformTools
         }
 
         [Preserve]
+        public void SetCameraMode(string json)
+        {
+            VueMessage message = ParseVueMessage(json);
+            VuePayload payload = message != null && message.payload != null
+                ? message.payload
+                : new VuePayload();
+            SetCameraMode(
+                message != null ? message.requestId : string.Empty,
+                payload.mode
+            );
+        }
+
+        [Preserve]
         public void SetCameraMode(string requestId, string requestedMode)
         {
             if (!EnsureObserver())
@@ -251,6 +277,45 @@ namespace UavUsv.PlatformTools
                 return;
             }
             SwitchCamera(requestId, requestedMode);
+        }
+
+        private static VueMessage ParseVueMessage(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return new VueMessage { payload = new VuePayload() };
+
+            try
+            {
+                VueMessage message = JsonUtility.FromJson<VueMessage>(json);
+                if (message != null && message.payload != null)
+                    return message;
+
+                DirectCameraMessage direct =
+                    JsonUtility.FromJson<DirectCameraMessage>(json);
+                return direct == null
+                    ? new VueMessage { payload = new VuePayload() }
+                    : new VueMessage
+                    {
+                        requestId = direct.requestId,
+                        payload = new VuePayload
+                        {
+                            deviceCode = direct.deviceCode,
+                            mode = direct.mode
+                        }
+                    };
+            }
+            catch
+            {
+                return new VueMessage { payload = new VuePayload() };
+            }
+        }
+
+        [Serializable]
+        private sealed class DirectCameraMessage
+        {
+            public string requestId;
+            public string deviceCode;
+            public string mode;
         }
 
         [Preserve]
