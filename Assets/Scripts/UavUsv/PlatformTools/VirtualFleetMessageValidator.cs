@@ -140,6 +140,15 @@ namespace UavUsv.PlatformTools
             result = ValidateRuntimeMode(batch.runtimeMode);
             if (!result.IsValid)
                 return result;
+            if (!string.Equals(
+                    batch.coordinateFrame,
+                    VirtualFleetProtocol.GlobalCoordinateFrame,
+                    StringComparison.Ordinal
+                ))
+                return Invalid(
+                    "invalid_coordinate_frame",
+                    "applyPoseBatch requires coordinateFrame=GLOBAL_ENU"
+                );
             if (currentRunId <= 0)
                 return Invalid("run_not_loaded", "No scenario is loaded");
             if (batch.runId != currentRunId)

@@ -3,7 +3,7 @@
 状态：A/B 联调协议
 适用项目：`Albatrossii/UAV_USV_Unity_VirtualFleet`
 运行模式：`VIRTUAL_SIMULATION`
-更新时间：2026 年 8 月 14 日
+更新时间：2026 年 8 月 15 日
 
 ## 1. 协议目标
 
@@ -94,13 +94,29 @@ VIRTUAL_SIMULATION
 
 ## 4. 坐标、速度和随机生成
 
-配置数据和位姿数据统一使用局部 ENU 坐标，单位为米：
+算法运行时输出使用以编队中心为原点的局部 ENU 坐标，单位为米：
 
 ```text
-eastM  = 东向
-northM = 北向
-upM    = 上向
+coordinateFrame = FLEET_LOCAL_ENU
+x = 局部东向
+y = 局部北向
+z = 局部上向
 ```
+
+当前编队中心对应全局 ENU `(-75,-310,0)`。B 侧在发送
+`applyPoseBatch` 前必须执行：
+
+```text
+eastM  = x - 75
+northM = y - 310
+upM    = z
+```
+
+`applyPoseBatch` 中的位姿始终使用全局 ENU。Unity 不增加额外平移，
+只执行 `PresentationCoordinateScale` 表现层缩放。
+
+未来若算法输出全局 ENU，必须声明 `coordinateFrame = GLOBAL_ENU`，
+B 侧不得增加上述偏移。未声明坐标系的算法帧必须拒绝。
 
 航向角字段为 `headingDeg`，以北为 0 度，顺时针增加：
 

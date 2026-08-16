@@ -3,7 +3,7 @@
 状态：A/B 联调协议  
 适用项目：`Albatrossii/UAV_USV_Unity_VirtualFleet`  
 运行模式：`VIRTUAL_SIMULATION`  
-更新时间：2026-08-14
+更新时间：2026-08-15
 
 ## 1. 协议目标
 
@@ -70,19 +70,48 @@ ESCORT_GUARD
 
 ## 4. 坐标、速度和朝向
 
-算法层统一使用 ENU 坐标，单位为米：
+算法运行时输出以编队中心为原点的局部 ENU 坐标，单位为米：
 
 ```text
-eastM  = 东
-northM = 北
-upM    = 上
+coordinateFrame = FLEET_LOCAL_ENU
+x = 局部东向
+y = 局部北向
+z = 局部上向
 ```
 
-Unity 坐标转换：
+当前虚拟编队全局 ENU 原点为：
 
 ```text
-Unity world = (eastM, upM, northM)
+fleetOriginEastM  = -75
+fleetOriginNorthM = -310
+fleetOriginUpM    = 0
 ```
+
+B 侧算法适配器必须先转换为全局 ENU：
+
+```text
+eastM  = x + fleetOriginEastM
+northM = y + fleetOriginNorthM
+upM    = z + fleetOriginUpM
+```
+
+`applyPoseBatch` 中的 `eastM`、`northM`、`upM` 始终为全局 ENU。
+Unity 不再增加编队原点偏移，只执行表现层坐标转换：
+
+```text
+Unity world = (eastM, upM, northM) * PresentationCoordinateScale
+```
+
+因此局部算法坐标 `(0,0,0)` 对应：
+
+```text
+全局 ENU = (-75,-310,0)
+Unity    = (-13.5,0,-55.8)
+```
+
+若未来算法直接输出全局 ENU，必须明确声明
+`coordinateFrame = GLOBAL_ENU`，B 侧不得再增加原点偏移。
+未声明 `coordinateFrame` 的算法帧必须拒绝，不允许自动猜测。
 
 朝向字段 `headingDeg`：
 
