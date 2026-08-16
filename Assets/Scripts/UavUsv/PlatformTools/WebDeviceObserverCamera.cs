@@ -35,6 +35,8 @@ namespace UavUsv.PlatformTools
         private Material uavTrailMaterial;
         private Material usvTrailMaterial;
         private float nextTrailSampleAt;
+        private bool trailSampleLogged;
+        private int lastTrailDeviceCount = -1;
 
         private const int MaxTrailPoints = 240;
         private const float TrailSampleSeconds = .12f;
@@ -348,11 +350,35 @@ namespace UavUsv.PlatformTools
             Vector3 groupCenter;
             float spread;
             CalculateGroupFrame(out groupCenter, out spread);
-            float distance = Mathf.Clamp(58f + spread * .9f, 58f, 220f);
-            Vector3 offset = Quaternion.Euler(58f, -35f, 0f) * Vector3.back * distance;
+            int deviceCount = Mathf.Max(1, sceneTargets.Count);
+            float baseDistance = deviceCount <= 8
+                ? 26f
+                : deviceCount <= 24
+                    ? 36f
+                    : deviceCount <= 80
+                        ? 48f
+                        : 60f;
+            float spreadMultiplier = deviceCount <= 8 ? 1.8f : 1.25f;
+            float distance = Mathf.Clamp(
+                baseDistance + spread * spreadMultiplier,
+                baseDistance,
+                220f
+            );
+            Vector3 offset = Quaternion.Euler(55f, -35f, 0f) * Vector3.back * distance;
             focus = groupCenter + Vector3.up * 1.2f;
             position = focus + offset;
-            desiredFieldOfView = 54f;
+            float baseFov = deviceCount <= 8
+                ? 44f
+                : deviceCount <= 24
+                    ? 48f
+                    : deviceCount <= 80
+                        ? 52f
+                        : 56f;
+            desiredFieldOfView = Mathf.Clamp(
+                baseFov + Mathf.InverseLerp(16f, 120f, spread) * 8f,
+                baseFov,
+                64f
+            );
         }
 
         private void CalculateLighthouseView(out Vector3 position, out Vector3 focus)
@@ -463,7 +489,6 @@ namespace UavUsv.PlatformTools
             {
                 GameObject root = new GameObject("VirtualFleetTrails");
                 trailRoot = root.transform;
-                trailRoot.SetParent(transform, false);
             }
 
             HashSet<Transform> activeTargets = new HashSet<Transform>();
@@ -484,13 +509,16 @@ namespace UavUsv.PlatformTools
                     line.textureMode = LineTextureMode.Stretch;
                     line.numCapVertices = 3;
                     line.numCornerVertices = 3;
-                    line.widthMultiplier = IsUav(target) ? .10f : .14f;
-                    line.material = GetTrailMaterial(IsUav(target)
-                        ? true
-                        : false);
-                    line.startColor = line.endColor = IsUav(target)
+                    bool isUav = IsUav(target);
+                    Color trailColor = isUav
                         ? new Color(.2f, .88f, 1f, .95f)
                         : new Color(1f, .58f, .08f, .95f);
+                    line.widthMultiplier = isUav ? .26f : .32f;
+                    line.sharedMaterial = GetTrailMaterial(isUav);
+                    line.startColor = line.endColor = trailColor;
+                    line.shadowCastingMode =
+                        UnityEngine.Rendering.ShadowCastingMode.Off;
+                    line.receiveShadows = false;
                     fleetTrails.Add(target, line);
                     fleetTrailPoints.Add(target, new List<Vector3>(MaxTrailPoints));
                 }
@@ -511,6 +539,15 @@ namespace UavUsv.PlatformTools
                 fleetTrails.Remove(stale);
                 fleetTrailPoints.Remove(stale);
             }
+
+            if (fleetTrails.Count != lastTrailDeviceCount)
+            {
+                lastTrailDeviceCount = fleetTrails.Count;
+                Debug.Log(
+                    "[WebDeviceObserverCamera] VirtualFleetTrails refreshed: " +
+                    fleetTrails.Count + " devices."
+                );
+            }
         }
 
         private Material GetTrailMaterial(bool isUav)
@@ -521,13 +558,15 @@ namespace UavUsv.PlatformTools
             if (material)
                 return material;
 
-            Shader shader = Shader.Find("Sprites/Default");
-            if (!shader)
-                shader = Shader.Find("Unlit/Color");
-            material = new Material(shader)
-            {
-                name = "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV")
-            };
+            Color trailColor = isUav
+                ? new Color(.2f, .88f, 1f, .95f)
+                : new Color(1f, .58f, .08f, .95f);
+            material = SceneFactory.Material(
+                "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV"),
+                trailColor,
+                0f,
+                .5f
+            );
             if (isUav)
                 uavTrailMaterial = material;
             else
@@ -566,6 +605,17 @@ namespace UavUsv.PlatformTools
                     {
                         line.positionCount = points.Count;
                         line.SetPosition(points.Count - 1, point);
+                    }
+
+                    if (!trailSampleLogged && points.Count >= 2)
+                    {
+                        trailSampleLogged = true;
+                        Debug.Log(
+                            "[WebDeviceObserverCamera] Virtual fleet trajectory " +
+                            "sampled: " + target.name +
+                            " points=" + points.Count +
+                            " mode=" + CurrentModeName
+                        );
                     }
                 }
             }
@@ -639,6 +689,8 @@ namespace UavUsv.PlatformTools
                 Destroy(uavTrailMaterial);
             if (usvTrailMaterial)
                 Destroy(usvTrailMaterial);
+            if (trailRoot)
+                Destroy(trailRoot.gameObject);
         }
     }
 }
