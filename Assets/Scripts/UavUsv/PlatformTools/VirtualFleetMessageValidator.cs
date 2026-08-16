@@ -290,7 +290,14 @@ namespace UavUsv.PlatformTools
                     if (current == MissionState.Running || current == MissionState.Paused) next = MissionState.Stopped; else return false;
                     break;
                 case VirtualFleetMessageTypes.MissionReset:
-                    if (current == MissionState.Stopped) next = MissionState.Reset; else return false;
+                    // Reset is an explicit user recovery action. It must be
+                    // available from running or paused missions as well.
+                    if (current == MissionState.Stopped ||
+                        current == MissionState.Running ||
+                        current == MissionState.Paused)
+                        next = MissionState.Reset;
+                    else
+                        return false;
                     break;
                 default:
                     return false;

@@ -55,6 +55,10 @@ namespace UavUsv.PlatformTools
         private WebVehicleCommandController vehicleController;
         private VirtualFleetPlatformBridge virtualFleetBridge;
         private static WebCommandBridge instance;
+        private string lastCameraCommandKey = string.Empty;
+        private float lastCameraCommandAt = -1f;
+
+        private const float DuplicateCameraCommandWindow = .35f;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -190,6 +194,25 @@ namespace UavUsv.PlatformTools
             return true;
         }
 
+        [ContextMenu("Set Web Overview")]
+        private void SetWebOverviewForTesting()
+        {
+            if (!EnsureObserver())
+            {
+                Debug.LogWarning(
+                    "[WebCommandBridge] Web overview is unavailable because " +
+                    "the main camera is not ready."
+                );
+                return;
+            }
+
+            observer.SetOverview();
+            Debug.Log(
+                "[WebCommandBridge] WebDeviceObserverCamera set to overview " +
+                "for manual testing."
+            );
+        }
+
         private bool EnsureVehicleController()
         {
             if (!vehicleController)
@@ -264,6 +287,18 @@ namespace UavUsv.PlatformTools
         [Preserve]
         public void SetCameraMode(string requestId, string requestedMode)
         {
+            string normalizedMode = string.IsNullOrWhiteSpace(requestedMode)
+                ? "overview"
+                : requestedMode.Trim().ToLowerInvariant();
+            string selectedCode = observer ? observer.CurrentDeviceCode : string.Empty;
+            string commandKey = normalizedMode + "|" + selectedCode;
+            if (string.Equals(commandKey, lastCameraCommandKey, StringComparison.Ordinal) &&
+                Time.unscaledTime - lastCameraCommandAt <
+                DuplicateCameraCommandWindow)
+                return;
+
+            lastCameraCommandKey = commandKey;
+            lastCameraCommandAt = Time.unscaledTime;
             if (!EnsureObserver())
             {
                 PostCameraResult(
@@ -276,7 +311,7 @@ namespace UavUsv.PlatformTools
                 );
                 return;
             }
-            SwitchCamera(requestId, requestedMode);
+            SwitchCamera(requestId, normalizedMode);
         }
 
         private static VueMessage ParseVueMessage(string json)

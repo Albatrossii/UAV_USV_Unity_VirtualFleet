@@ -17,6 +17,7 @@ namespace UavUsv.PlatformTools
         private long lastSequence = -1;
         private MissionState missionState = MissionState.Stopped;
         private WebCommandBridge cameraBridge;
+        private VirtualFleetPoseOwnershipGuard poseOwnershipGuard;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -515,12 +516,19 @@ namespace UavUsv.PlatformTools
                     runtime.StopMission();
                     break;
                 case VirtualFleetMessageTypes.MissionReset:
+                    // Reset is allowed as a recovery action from RUNNING or
+                    // PAUSED. Stop first so the runtime is never left locked.
+                    runtime.StopMission();
                     runtime.ResetMission();
                     lastSequence = -1;
                     break;
             }
 
-            missionState = nextState;
+            // ResetMission synchronously regenerates the fleet and leaves the
+            // runtime stopped. RESET is only an internal transition.
+            missionState = message.type == VirtualFleetMessageTypes.MissionReset
+                ? MissionState.Stopped
+                : nextState;
             Emit(new MissionStateResponse
             {
                 type = "missionStateChanged",
@@ -665,10 +673,26 @@ namespace UavUsv.PlatformTools
             if (runtime != null)
             {
                 DisableLegacyCollisionSafety();
+                EnsurePoseOwnershipGuard();
                 return true;
             }
             EmitError(requestId, RuntimeNotReadyCode, "Virtual fleet runtime is not registered");
             return false;
+        }
+
+        private void EnsurePoseOwnershipGuard()
+        {
+            VirtualFleetScenarioController controller =
+                runtime as VirtualFleetScenarioController;
+            if (!controller)
+                return;
+
+            if (!poseOwnershipGuard)
+                poseOwnershipGuard = GetComponent<VirtualFleetPoseOwnershipGuard>();
+            if (!poseOwnershipGuard)
+                poseOwnershipGuard =
+                    gameObject.AddComponent<VirtualFleetPoseOwnershipGuard>();
+            poseOwnershipGuard.Initialize(controller);
         }
 
         private static void DisableLegacyCollisionSafety()

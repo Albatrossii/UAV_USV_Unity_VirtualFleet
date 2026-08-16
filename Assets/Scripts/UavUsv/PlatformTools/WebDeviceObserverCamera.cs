@@ -35,6 +35,8 @@ namespace UavUsv.PlatformTools
         private Material uavTrailMaterial;
         private Material usvTrailMaterial;
         private float nextTrailSampleAt;
+        private bool trailSampleLogged;
+        private int lastTrailDeviceCount = -1;
 
         private const int MaxTrailPoints = 240;
         private const float TrailSampleSeconds = .12f;
@@ -348,11 +350,35 @@ namespace UavUsv.PlatformTools
             Vector3 groupCenter;
             float spread;
             CalculateGroupFrame(out groupCenter, out spread);
-            float distance = Mathf.Clamp(58f + spread * .9f, 58f, 220f);
-            Vector3 offset = Quaternion.Euler(58f, -35f, 0f) * Vector3.back * distance;
+            int deviceCount = Mathf.Max(1, sceneTargets.Count);
+            float baseDistance = deviceCount <= 8
+                ? 26f
+                : deviceCount <= 24
+                    ? 36f
+                    : deviceCount <= 80
+                        ? 48f
+                        : 60f;
+            float spreadMultiplier = deviceCount <= 8 ? 1.8f : 1.25f;
+            float distance = Mathf.Clamp(
+                baseDistance + spread * spreadMultiplier,
+                baseDistance,
+                220f
+            );
+            Vector3 offset = Quaternion.Euler(55f, -35f, 0f) * Vector3.back * distance;
             focus = groupCenter + Vector3.up * 1.2f;
             position = focus + offset;
-            desiredFieldOfView = 54f;
+            float baseFov = deviceCount <= 8
+                ? 44f
+                : deviceCount <= 24
+                    ? 48f
+                    : deviceCount <= 80
+                        ? 52f
+                        : 56f;
+            desiredFieldOfView = Mathf.Clamp(
+                baseFov + Mathf.InverseLerp(16f, 120f, spread) * 8f,
+                baseFov,
+                64f
+            );
         }
 
         private void CalculateLighthouseView(out Vector3 position, out Vector3 focus)
@@ -513,6 +539,15 @@ namespace UavUsv.PlatformTools
                 fleetTrails.Remove(stale);
                 fleetTrailPoints.Remove(stale);
             }
+
+            if (fleetTrails.Count != lastTrailDeviceCount)
+            {
+                lastTrailDeviceCount = fleetTrails.Count;
+                Debug.Log(
+                    "[WebDeviceObserverCamera] VirtualFleetTrails refreshed: " +
+                    fleetTrails.Count + " devices."
+                );
+            }
         }
 
         private Material GetTrailMaterial(bool isUav)
@@ -570,6 +605,17 @@ namespace UavUsv.PlatformTools
                     {
                         line.positionCount = points.Count;
                         line.SetPosition(points.Count - 1, point);
+                    }
+
+                    if (!trailSampleLogged && points.Count >= 2)
+                    {
+                        trailSampleLogged = true;
+                        Debug.Log(
+                            "[WebDeviceObserverCamera] Virtual fleet trajectory " +
+                            "sampled: " + target.name +
+                            " points=" + points.Count +
+                            " mode=" + CurrentModeName
+                        );
                     }
                 }
             }
