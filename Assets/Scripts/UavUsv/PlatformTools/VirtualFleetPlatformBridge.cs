@@ -663,9 +663,30 @@ namespace UavUsv.PlatformTools
         {
             TryFindRuntime();
             if (runtime != null)
+            {
+                DisableLegacyCollisionSafety();
                 return true;
+            }
             EmitError(requestId, RuntimeNotReadyCode, "Virtual fleet runtime is not registered");
             return false;
+        }
+
+        private static void DisableLegacyCollisionSafety()
+        {
+            RuntimeCollisionSafety[] safetySystems =
+                FindObjectsOfType<RuntimeCollisionSafety>(true);
+            for (int i = 0; i < safetySystems.Length; i++)
+            {
+                RuntimeCollisionSafety safety = safetySystems[i];
+                if (!safety || !safety.enabled)
+                    continue;
+
+                safety.enabled = false;
+                Debug.Log(
+                    "[VirtualFleetPlatformBridge] Disabled RuntimeCollisionSafety " +
+                    "for VIRTUAL_SIMULATION pose ownership."
+                );
+            }
         }
 
         private bool EnsureCameraBridge(string requestId)

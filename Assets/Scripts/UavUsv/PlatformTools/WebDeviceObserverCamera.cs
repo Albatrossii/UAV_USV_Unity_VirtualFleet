@@ -463,7 +463,6 @@ namespace UavUsv.PlatformTools
             {
                 GameObject root = new GameObject("VirtualFleetTrails");
                 trailRoot = root.transform;
-                trailRoot.SetParent(transform, false);
             }
 
             HashSet<Transform> activeTargets = new HashSet<Transform>();
@@ -521,13 +520,26 @@ namespace UavUsv.PlatformTools
             if (material)
                 return material;
 
-            Shader shader = Shader.Find("Sprites/Default");
-            if (!shader)
-                shader = Shader.Find("Unlit/Color");
-            material = new Material(shader)
+            Material runtimeStandard = Resources.Load<Material>("RuntimeStandard");
+            if (runtimeStandard)
             {
-                name = "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV")
-            };
+                material = new Material(runtimeStandard)
+                {
+                    name = "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV")
+                };
+            }
+            else
+            {
+                Shader shader = Shader.Find("Standard");
+                if (!shader)
+                    shader = Shader.Find("Legacy Shaders/Diffuse");
+                if (!shader)
+                    return null;
+                material = new Material(shader)
+                {
+                    name = "VirtualFleetTrajectoryMaterial-" + (isUav ? "UAV" : "USV")
+                };
+            }
             if (isUav)
                 uavTrailMaterial = material;
             else
@@ -639,6 +651,8 @@ namespace UavUsv.PlatformTools
                 Destroy(uavTrailMaterial);
             if (usvTrailMaterial)
                 Destroy(usvTrailMaterial);
+            if (trailRoot)
+                Destroy(trailRoot.gameObject);
         }
     }
 }
