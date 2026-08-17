@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>算法仿真</title>
+  <style>
+    :root {
+      --bg: #04161a;
+      --panel: rgba(7, 26, 31, .94);
+      --field: #07171c;
+      --line: rgba(108, 228, 213, .2);
+      --line-strong: #28515a;
+      --text: #effffd;
+      --muted: #8fb4b2;
+      --accent: #6ce4d5;
+      --ok: #68e6a8;
+      --warn: #ffcf72;
+      --danger: #ff8179;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      min-width: 1120px;
+      margin: 0;
+      color: var(--text);
+      font-family: Inter, "Microsoft YaHei", Arial, sans-serif;
+      background:
+        linear-gradient(rgba(108, 228, 213, .025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(108, 228, 213, .025) 1px, transparent 1px),
+        var(--bg);
+      background-size: 24px 24px;
+    }
+
+    .page { width: min(1440px, calc(100% - 34px)); margin: 0 auto; padding: 28px 0 42px; }
+
+    /* Only the original framed hero is removed. */
+    .page-header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 0 2px 21px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow { margin: 0 0 8px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+    h1 { margin: 0; font-size: 30px; line-height: 1.15; }
+    .subtitle { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .online { display: inline-flex; align-items: center; gap: 8px; color: var(--ok); font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .online::before { width: 9px; height: 9px; content: ""; border-radius: 50%; background: var(--ok); box-shadow: 0 0 12px rgba(104, 230, 168, .7); }
+
+    .grid { display: grid; grid-template-columns: 290px minmax(520px, 1fr) 290px; gap: 14px; margin-top: 18px; align-items: start; }
+    .column { display: grid; gap: 14px; }
+    .panel, .stage { min-width: 0; padding: 15px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    .panel-head, .stage-head, .strip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .panel-head { margin-bottom: 13px; }
+    .panel-head h2, .stage-head h2, .strip-head h2 { margin: 0; font-size: 15px; }
+    .panel-head span, .stage-head span, .strip-head span { color: #6f9697; font-size: 10px; }
+    label { display: grid; gap: 6px; margin-top: 10px; color: #9cc1bd; font-size: 11px; }
+    input, select { width: 100%; min-height: 36px; padding: 0 9px; color: var(--text); background: var(--field); border: 1px solid var(--line-strong); border-radius: 4px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+    small { color: #6f9697; font-size: 10px; }
+    .description, .note { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+    .actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 0 10px; color: #dff8f4; background: rgba(108, 228, 213, .06); border: 1px solid rgba(108, 228, 213, .24); border-radius: 4px; font: inherit; cursor: pointer; }
+    button.primary { color: #061113; background: var(--accent); border-color: var(--accent); font-weight: 800; }
+    button.success { color: var(--ok); border-color: rgba(104, 230, 168, .45); }
+    button.danger { color: var(--danger); border-color: rgba(255, 129, 121, .44); }
+    button.muted { opacity: .42; cursor: not-allowed; }
+
+    .log { height: 200px; overflow: hidden; padding: 10px; color: #9ce7df; background: #051419; border-top: 1px dashed rgba(108, 228, 213, .34); font: 11px/1.7 Consolas, monospace; }
+    .log div { margin-bottom: 4px; }
+
+    .stage { overflow: hidden; padding: 0; }
+    .stage-head { padding: 14px 15px; border-bottom: 1px solid var(--line); }
+    .stage-head strong { color: var(--warn); font-size: 12px; }
+    .ocean { position: relative; min-height: 500px; overflow: hidden; background: linear-gradient(145deg, #16434e, #061c28 56%, #092633); }
+    .island { position: absolute; right: -30px; top: -55px; width: 260px; height: 330px; border-radius: 46% 54% 50% 50%; background: radial-gradient(circle at 45% 40%, #c1ba94, #778066 37%, #38564f 64%, transparent 65%); opacity: .85; transform: rotate(25deg); }
+    .trail { position: absolute; width: 128px; height: 58px; border: 3px solid #4ed9f4; border-color: #4ed9f4 transparent transparent transparent; border-radius: 50%; transform: rotate(-18deg); opacity: .95; }
+    .trail.one { left: 35%; top: 44%; }
+    .trail.two { left: 42%; top: 54%; width: 76px; border-color: #ff9b3d transparent transparent transparent; transform: rotate(30deg); }
+    .unit { position: absolute; width: 11px; height: 11px; border-radius: 50%; box-shadow: 0 0 13px currentColor; }
+    .uav { color: #5be7ff; background: #5be7ff; }
+    .usv { color: #ff9b3d; background: #ff9b3d; }
+    .u1 { left: 43%; top: 46%; } .u2 { left: 51%; top: 39%; } .u3 { left: 58%; top: 49%; }
+    .s1 { left: 47%; top: 62%; } .s2 { left: 54%; top: 66%; } .s3 { left: 61%; top: 59%; }
+    .camera-tip { position: absolute; right: 12px; bottom: 12px; padding: 8px 14px; color: #d7e8e7; background: rgba(4, 14, 18, .78); border: 1px solid rgba(108, 228, 213, .18); border-radius: 4px; font-size: 11px; }
+
+    .device-strip { padding: 14px 15px; border-top: 1px solid var(--line); }
+    .device-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .device { color: #ffd56a; } .device.usv { color: #66dbe6; }
+    .follow { margin-right: 7px; }
+
+    .status { display: grid; gap: 11px; margin: 0; }
+    .status div { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+    .status dd { margin: 0; color: var(--text); font-weight: 700; }
+    pre { min-height: 196px; max-height: 260px; margin: 0; overflow: hidden; padding: 10px; color: #c4f4ee; background: #051419; border: 1px solid rgba(108, 228, 213, .12); font: 10px/1.55 Consolas, monospace; white-space: pre-wrap; }
+    .speed { display: flex; justify-content: space-between; margin-top: 12px; color: var(--text); font-size: 11px; }
+    .bar { height: 5px; margin-top: 7px; overflow: hidden; background: #17343a; border-radius: 3px; }
+    .bar i { display: block; width: 33%; height: 100%; background: var(--accent); }
+    .bar.usv i { width: 50%; background: #ff9b3d; }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">INDEPENDENT UNITY INTEGRATION</p>
+        <h1>算法仿真</h1>
+      </div>
+      <div class="online">UNITY BRIDGE ONLINE</div>
+    </header>
+
+    <div class="grid">
+      <aside class="column">
+        <section class="panel">
+          <div class="panel-head"><h2>场景配置</h2><span>V3 PROTOCOL</span></div>
+          <label>算法<select><option>GB-SFLA-CS 协同围捕（模拟）</option><option>混合 UAV/USV 护航守卫（模拟）</option></select></label>
+          <p class="description">算法负责目标分配、围捕航点、设备速度方向和捕获状态。</p>
+          <div class="two-col">
+            <label>UAV 数量<input value="3"></label>
+            <label>USV 数量<input value="3"></label>
+            <label>UAV 初始速度 m/s<input value="5"><small>上限 15 m/s</small></label>
+            <label>USV 初始速度 m/s<input value="1"><small>上限 2 m/s</small></label>
+          </div>
+          <label>随机种子<input value="20260814"></label>
+          <div class="actions"><button class="primary">⟳ 生成场景</button><button>◉ 重置</button></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>任务控制</h2><span>STOPPED</span></div>
+          <div class="actions"><button class="success">▷ 开始</button><button class="muted">Ⅱ 暂停</button><button class="danger muted">◉ 停止</button></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>回执日志</h2><span>12 EVENTS</span></div>
+          <div class="log">
+            <div>21:19:55 missionReset / missionReset:...</div>
+            <div>21:19:52 missionStateChanged: STOPPED</div>
+            <div>21:19:50 scenarioReady: success</div>
+            <div>21:19:48 poseFrameApplied: sequence=27 success</div>
+            <div>21:19:47 applyPoseBatch: sequence=27</div>
+            <div>21:19:46 cameraChanged: overview</div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="stage">
+        <div class="stage-head"><div><h2>Unity WebGL 虚拟场景</h2><span>独立运行实例：virtual-fleet-v3-01</span></div><strong>3 UAV / 3 USV</strong></div>
+        <div class="ocean">
+          <div class="island"></div>
+          <div class="trail one"></div><div class="trail two"></div>
+          <i class="unit uav u1"></i><i class="unit uav u2"></i><i class="unit uav u3"></i>
+          <i class="unit usv s1"></i><i class="unit usv s2"></i><i class="unit usv s3"></i>
+          <div class="camera-tip">Camera OVERVIEW · 3 UAV · 3 USV</div>
+        </div>
+        <div class="device-strip">
+          <div class="strip-head"><h2>设备选择</h2><span>点击设备后可切换跟随视角</span></div>
+          <div class="device-list"><button class="device">⌘ UAV-001</button><button class="device">⌘ UAV-002</button><button class="device">⌘ UAV-003</button><button class="device usv">⌘ USV-001</button><button class="device usv">⌘ USV-002</button><button class="device usv">⌘ USV-003</button></div>
+          <button class="follow muted">▣ 跟随 选中设备</button><button class="follow">▣ 全局视角</button>
+        </div>
+      </section>
+
+      <aside class="column">
+        <section class="panel">
+          <div class="panel-head"><h2>协议状态</h2><span>LIVE</span></div>
+          <dl class="status">
+            <div><dt>运行模式</dt><dd>VIRTUAL_SIMULATION</dd></div>
+            <div><dt>算法</dt><dd>GB_SFLA_CS</dd></div>
+            <div><dt>任务状态</dt><dd>STOPPED</dd></div>
+            <div><dt>序列号</dt><dd>27</dd></div>
+            <div><dt>选中设备</dt><dd>无</dd></div>
+          </dl>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>最近回执</h2><span>poseFrameApplied</span></div>
+          <pre>{
+  "type": "poseFrameApplied",
+  "payload": {
+    "success": true,
+    "code": "ok",
+    "appliedCount": 7,
+    "sequence": 27
+  }
+}</pre>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>物理速度规则</h2><span>m/s</span></div>
+          <div class="speed"><strong>UAV</strong><span>5.0 / 15</span></div><div class="bar"><i></i></div>
+          <div class="speed"><strong>USV</strong><span>1.0 / 2</span></div><div class="bar usv"><i></i></div>
+          <p class="note">Unity 内部按 PresentationCoordinateScale = 0.18 转换。</p>
+        </section>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>
