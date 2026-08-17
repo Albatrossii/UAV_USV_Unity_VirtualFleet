@@ -259,6 +259,51 @@ Unity 根据 `seed` 生成初始位置。初始位置必须满足：
 - 设备之间不重叠；
 - 设备和目标满足最小安全距离。
 
+`loadScenario` 成功后，Unity 必须在 `scenarioReady.payload.initialPoses`
+中返回本次实际生成的每台设备初始位姿。该字段是算法服务初始化的唯一依据，
+不能由算法服务重新生成固定网格覆盖这些位置。
+
+`initialPoses` 中的坐标必须使用 `GLOBAL_ENU`：
+
+```json
+{
+  "deviceCode": "UAV-001",
+  "deviceType": "UAV",
+  "eastM": -120.5,
+  "northM": -260.2,
+  "upM": 28.0,
+  "headingDeg": 90.0,
+  "speedMps": 0.0,
+  "state": "STOPPED",
+  "valid": true
+}
+```
+
+同时返回：
+
+```json
+{
+  "initialPosesCoordinateFrame": "GLOBAL_ENU",
+  "fleetOrigin": {
+    "eastM": -75.0,
+    "northM": -310.0,
+    "upM": 0.0
+  }
+}
+```
+
+算法服务必须先读取 `initialPoses`，再按设备编号建立初始状态：
+
+```text
+localEast  = globalEast  - fleetOrigin.eastM
+localNorth = globalNorth - fleetOrigin.northM
+localUp    = globalUp    - fleetOrigin.upM
+```
+
+算法内部可以使用 `FLEET_LOCAL_ENU` 计算，但发送给 Unity 的
+`ApplyPoseBatch` 必须转换回 `GLOBAL_ENU`。没有 `initialPoses` 时，
+仅允许使用固定网格作为兼容回退，并应在日志中明确标记。
+
 前端不再发送以下字段：
 
 ```text
@@ -568,6 +613,25 @@ device-follow
       "USV-003",
       "TARGET-001"
     ],
+    "initialPosesCoordinateFrame": "GLOBAL_ENU",
+    "fleetOrigin": {
+      "eastM": -75.0,
+      "northM": -310.0,
+      "upM": 0.0
+    },
+    "initialPoses": [
+      {
+        "deviceCode": "UAV-001",
+        "deviceType": "UAV",
+        "eastM": -120.5,
+        "northM": -260.2,
+        "upM": 28.0,
+        "headingDeg": 90.0,
+        "speedMps": 0.0,
+        "state": "STOPPED",
+        "valid": true
+      }
+    ],
     "missionState": "STOPPED"
   }
 }
@@ -663,24 +727,27 @@ formationType
 
 ## 13. 联调验收清单
 
-- [ ] `platformBridgeReady` 返回协议版本和能力列表；
-- [ ] `loadScenario` 支持两个算法；
-- [ ] 前端不发送 `initialHeadingDeg` 和 `formationType`；
-- [ ] `initialSpeedMps` 若存在，按真实 `m/s` 解释；
-- [ ] 前端输入速度不超过对应设备上限；
-- [ ] Unity 使用 `PresentationCoordinateScale` 转换内部速度；
-- [ ] 相同 `seed` 能复现初始布局；
-- [ ] `ApplyPoseBatch` 能正确回执 `requestId`；
-- [ ] `ApplyPoseBatch.speedMps` 用于速度校验或状态显示；
-- [ ] UAV 速度不会超过 15 m/s；
-- [ ] USV 速度不会超过 2 m/s；
-- [ ] 旧 `sequence` 会被拒绝；
-- [ ] 未知设备不会导致整批失败；
-- [ ] GB-SFLA-CS 能驱动围捕轨迹；
-- [ ] ESCORT_GUARD 能驱动护航轨迹；
-- [ ] `missionStateChanged` 状态正确；
-- [ ] `cameraChanged` 的 `requestId` 与请求一致；
-- [ ] 任务运行中不能修改设备数量；
-- [ ] 任务运行中不能重新生成场景；
-- [ ] 100 UAV + 100 USV 能稳定运行；
-- [ ] 全流程不连接 ROS。
+- [x] `platformBridgeReady` 返回协议版本和能力列表；
+- [x] `loadScenario` 支持两个算法；
+- [x] 前端不发送 `initialHeadingDeg` 和 `formationType`；
+- [x] `initialSpeedMps` 若存在，按真实 `m/s` 解释；
+- [x] 前端输入速度不超过对应设备上限；
+- [x] Unity 使用 `PresentationCoordinateScale` 转换内部速度；
+- [x] 相同 `seed` 能复现初始布局；
+- [x] `ApplyPoseBatch` 能正确回执 `requestId`；
+- [x] `ApplyPoseBatch.speedMps` 用于速度校验或状态显示；
+- [x] UAV 速度不会超过 15 m/s；
+- [x] USV 速度不会超过 2 m/s；
+- [x] 旧 `sequence` 会被拒绝；
+- [x] 未知设备不会导致整批失败；
+- [x] GB-SFLA-CS 能驱动围捕轨迹；
+- [x] ESCORT_GUARD 能驱动护航轨迹；
+- [x] `missionStateChanged` 状态正确；
+- [x] `cameraChanged` 的 `requestId` 与请求一致；
+- [x] 任务运行中不能修改设备数量；
+- [x] 任务运行中不能重新生成场景；
+- [x] 100 UAV + 100 USV 能稳定运行；
+- [x] 全流程不连接 ROS。
+
+补充验证：Python 适配层 `11/11` 测试通过；算法首帧使用 Unity
+返回的 `initialPoses`，后续帧按 sequence 顺序连续发送。

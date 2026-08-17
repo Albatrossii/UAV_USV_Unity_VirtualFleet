@@ -24,6 +24,8 @@ namespace UavUsv.PlatformTools
             new Dictionary<Transform, LineRenderer>();
         private readonly Dictionary<Transform, List<Vector3>> fleetTrailPoints =
             new Dictionary<Transform, List<Vector3>>();
+        private readonly HashSet<Transform> initializedTrailTargets =
+            new HashSet<Transform>();
         private Camera observedCamera;
         private UavUsv.ChaseCamera chaseCamera;
         private UavUsv.VirtualFleetManager fleetManager;
@@ -37,10 +39,12 @@ namespace UavUsv.PlatformTools
         private float nextTrailSampleAt;
         private bool trailSampleLogged;
         private int lastTrailDeviceCount = -1;
+        private bool trailRecordingEnabled;
 
-        private const int MaxTrailPoints = 240;
-        private const float TrailSampleSeconds = .12f;
-        private const float TrailMinDistance = .08f;
+        private const int MaxTrailPoints = 180;
+        private const float TrailSampleSeconds = .2f;
+        private const float TrailMinDistance = 1.25f;
+        private const float TrailMaxJumpDistance = 4f;
 
         public string CurrentDeviceCode { get; private set; } = string.Empty;
         public string CurrentModeName => ModeName(mode);
@@ -139,6 +143,7 @@ namespace UavUsv.PlatformTools
             CurrentDeviceCode = string.Empty;
             mode = ObservationMode.Overview;
             ActivateObserver();
+            RefreshTrailVisibility();
         }
 
         public void SetLighthouse()
@@ -157,6 +162,35 @@ namespace UavUsv.PlatformTools
             CurrentDeviceCode = string.Empty;
             if (chaseCamera)
                 chaseCamera.enabled = true;
+            RefreshTrailVisibility();
+        }
+
+        public void SetMissionState(string state)
+        {
+            string normalized = (state ?? string.Empty).Trim().ToUpperInvariant();
+            if (normalized == "RUNNING" && !trailRecordingEnabled)
+                ResetFleetTrails();
+            trailRecordingEnabled = normalized == "RUNNING";
+            RefreshTrailVisibility();
+        }
+
+        public void ResetFleetTrails()
+        {
+            foreach (KeyValuePair<Transform, List<Vector3>> pair in fleetTrailPoints)
+                pair.Value.Clear();
+            initializedTrailTargets.Clear();
+
+            foreach (KeyValuePair<Transform, LineRenderer> pair in fleetTrails)
+            {
+                if (!pair.Value)
+                    continue;
+                pair.Value.positionCount = 0;
+                pair.Value.enabled = false;
+            }
+
+            trailRecordingEnabled = false;
+            nextTrailSampleAt = Time.unscaledTime + TrailSampleSeconds;
+            trailSampleLogged = false;
         }
 
         public bool RecenterCurrentDevice(out string error)
@@ -350,34 +384,41 @@ namespace UavUsv.PlatformTools
             Vector3 groupCenter;
             float spread;
             CalculateGroupFrame(out groupCenter, out spread);
-            int deviceCount = Mathf.Max(1, sceneTargets.Count);
-            float baseDistance = deviceCount <= 8
-                ? 26f
-                : deviceCount <= 24
-                    ? 36f
-                    : deviceCount <= 80
-                        ? 48f
-                        : 60f;
-            float spreadMultiplier = deviceCount <= 8 ? 1.8f : 1.25f;
+            const float elevationDegrees = 55f;
+            const float overviewFov = 52f;
+            const float frameMargin = 1.18f;
+            float verticalHalfFov = overviewFov * Mathf.Deg2Rad * .5f;
+            float aspect = observedCamera
+                ? Mathf.Max(.75f, observedCamera.aspect)
+                : 1.2f;
+            float horizontalHalfFov = Mathf.Atan(
+                Mathf.Tan(verticalHalfFov) * aspect
+            );
+            float groundProjection = Mathf.Sin(elevationDegrees * Mathf.Deg2Rad);
+            float horizontalDistance = spread / Mathf.Max(
+                .05f,
+                Mathf.Tan(horizontalHalfFov)
+            );
+            float verticalDistance = spread * groundProjection / Mathf.Max(
+                .05f,
+                Mathf.Tan(verticalHalfFov)
+            );
             float distance = Mathf.Clamp(
-                baseDistance + spread * spreadMultiplier,
-                baseDistance,
+                Mathf.Max(horizontalDistance, verticalDistance) * frameMargin + 5f,
+                14f,
                 220f
             );
-            Vector3 offset = Quaternion.Euler(55f, -35f, 0f) * Vector3.back * distance;
+            Vector3 offset = Quaternion.Euler(
+                elevationDegrees,
+                -35f,
+                0f
+            ) * Vector3.back * distance;
             focus = groupCenter + Vector3.up * 1.2f;
             position = focus + offset;
-            float baseFov = deviceCount <= 8
-                ? 44f
-                : deviceCount <= 24
-                    ? 48f
-                    : deviceCount <= 80
-                        ? 52f
-                        : 56f;
             desiredFieldOfView = Mathf.Clamp(
-                baseFov + Mathf.InverseLerp(16f, 120f, spread) * 8f,
-                baseFov,
-                64f
+                overviewFov,
+                42f,
+                60f
             );
         }
 
@@ -511,9 +552,9 @@ namespace UavUsv.PlatformTools
                     line.numCornerVertices = 3;
                     bool isUav = IsUav(target);
                     Color trailColor = isUav
-                        ? new Color(.2f, .88f, 1f, .95f)
-                        : new Color(1f, .58f, .08f, .95f);
-                    line.widthMultiplier = isUav ? .26f : .32f;
+                        ? new Color(.2f, .88f, 1f, .72f)
+                        : new Color(1f, .58f, .08f, .72f);
+                    line.widthMultiplier = isUav ? .10f : .12f;
                     line.sharedMaterial = GetTrailMaterial(isUav);
                     line.startColor = line.endColor = trailColor;
                     line.shadowCastingMode =
@@ -538,6 +579,7 @@ namespace UavUsv.PlatformTools
                     Destroy(line.gameObject);
                 fleetTrails.Remove(stale);
                 fleetTrailPoints.Remove(stale);
+                initializedTrailTargets.Remove(stale);
             }
 
             if (fleetTrails.Count != lastTrailDeviceCount)
@@ -580,7 +622,6 @@ namespace UavUsv.PlatformTools
                 return;
             nextTrailSampleAt = Time.unscaledTime + TrailSampleSeconds;
 
-            bool visible = mode == ObservationMode.Overview;
             foreach (KeyValuePair<Transform, LineRenderer> pair in fleetTrails)
             {
                 Transform target = pair.Key;
@@ -588,11 +629,42 @@ namespace UavUsv.PlatformTools
                 if (!target || !line || !fleetTrailPoints.TryGetValue(target, out List<Vector3> points))
                     continue;
 
-                line.enabled = visible;
+                if (!trailRecordingEnabled)
+                {
+                    line.enabled = mode == ObservationMode.Overview && points.Count > 1;
+                    continue;
+                }
 
                 Vector3 point = target.position + Vector3.up * (IsUav(target) ? .08f : .18f);
+                if (!initializedTrailTargets.Contains(target))
+                {
+                    points.Clear();
+                    points.Add(point);
+                    line.positionCount = 1;
+                    line.SetPosition(0, point);
+                    line.enabled = false;
+                    initializedTrailTargets.Add(target);
+                    continue;
+                }
+
+                float distanceFromLastPoint = points.Count == 0
+                    ? 0f
+                    : Vector3.Distance(points[points.Count - 1], point);
+                if (distanceFromLastPoint > TrailMaxJumpDistance)
+                {
+                    // A first algorithm frame can be far from the generated
+                    // spawn position. Treat that jump as a new origin instead
+                    // of drawing a long line across the scene.
+                    points.Clear();
+                    points.Add(point);
+                    line.positionCount = 1;
+                    line.SetPosition(0, point);
+                    line.enabled = false;
+                    continue;
+                }
+
                 if (points.Count == 0 ||
-                    Vector3.Distance(points[points.Count - 1], point) >= TrailMinDistance)
+                    distanceFromLastPoint >= TrailMinDistance)
                 {
                     points.Add(point);
                     if (points.Count > MaxTrailPoints)
@@ -618,6 +690,23 @@ namespace UavUsv.PlatformTools
                         );
                     }
                 }
+
+                line.enabled = mode == ObservationMode.Overview && points.Count > 1;
+            }
+        }
+
+        private void RefreshTrailVisibility()
+        {
+            foreach (KeyValuePair<Transform, LineRenderer> pair in fleetTrails)
+            {
+                if (!pair.Value)
+                    continue;
+                List<Vector3> points;
+                fleetTrailPoints.TryGetValue(pair.Key, out points);
+                pair.Value.enabled =
+                    mode == ObservationMode.Overview &&
+                    points != null &&
+                    points.Count > 1;
             }
         }
 
