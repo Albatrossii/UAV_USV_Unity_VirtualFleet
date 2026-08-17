@@ -259,6 +259,51 @@ Unity 根据 `seed` 生成初始位置。初始位置必须满足：
 - 设备之间不重叠；
 - 设备和目标满足最小安全距离。
 
+`loadScenario` 成功后，Unity 必须在 `scenarioReady.payload.initialPoses`
+中返回本次实际生成的每台设备初始位姿。该字段是算法服务初始化的唯一依据，
+不能由算法服务重新生成固定网格覆盖这些位置。
+
+`initialPoses` 中的坐标必须使用 `GLOBAL_ENU`：
+
+```json
+{
+  "deviceCode": "UAV-001",
+  "deviceType": "UAV",
+  "eastM": -120.5,
+  "northM": -260.2,
+  "upM": 28.0,
+  "headingDeg": 90.0,
+  "speedMps": 0.0,
+  "state": "STOPPED",
+  "valid": true
+}
+```
+
+同时返回：
+
+```json
+{
+  "initialPosesCoordinateFrame": "GLOBAL_ENU",
+  "fleetOrigin": {
+    "eastM": -75.0,
+    "northM": -310.0,
+    "upM": 0.0
+  }
+}
+```
+
+算法服务必须先读取 `initialPoses`，再按设备编号建立初始状态：
+
+```text
+localEast  = globalEast  - fleetOrigin.eastM
+localNorth = globalNorth - fleetOrigin.northM
+localUp    = globalUp    - fleetOrigin.upM
+```
+
+算法内部可以使用 `FLEET_LOCAL_ENU` 计算，但发送给 Unity 的
+`ApplyPoseBatch` 必须转换回 `GLOBAL_ENU`。没有 `initialPoses` 时，
+仅允许使用固定网格作为兼容回退，并应在日志中明确标记。
+
 前端不再发送以下字段：
 
 ```text
@@ -567,6 +612,25 @@ device-follow
       "USV-002",
       "USV-003",
       "TARGET-001"
+    ],
+    "initialPosesCoordinateFrame": "GLOBAL_ENU",
+    "fleetOrigin": {
+      "eastM": -75.0,
+      "northM": -310.0,
+      "upM": 0.0
+    },
+    "initialPoses": [
+      {
+        "deviceCode": "UAV-001",
+        "deviceType": "UAV",
+        "eastM": -120.5,
+        "northM": -260.2,
+        "upM": 28.0,
+        "headingDeg": 90.0,
+        "speedMps": 0.0,
+        "state": "STOPPED",
+        "valid": true
+      }
     ],
     "missionState": "STOPPED"
   }

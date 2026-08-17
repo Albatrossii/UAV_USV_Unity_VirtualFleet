@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Scripting;
@@ -587,9 +588,51 @@ namespace UavUsv.PlatformTools
                     usvCount = currentConfig.usvCount,
                     targetCount = currentConfig.targetCount,
                     deviceCodes = BuildDeviceCodes(currentConfig),
+                    initialPosesCoordinateFrame = "GLOBAL_ENU",
+                    fleetOrigin = new FleetOriginPayload
+                    {
+                        eastM = -75.0,
+                        northM = -310.0,
+                        upM = 0.0
+                    },
+                    initialPoses = BuildInitialPoses(),
                     missionState = StateName(missionState)
                 }
             });
+        }
+
+        private UavUsv.VirtualPose[] BuildInitialPoses()
+        {
+            UavUsv.VirtualFleetScenarioController controller =
+                runtime as UavUsv.VirtualFleetScenarioController;
+            UavUsv.VirtualFleetSnapshot snapshot =
+                controller ? controller.GetSnapshot() : null;
+            UavUsv.VirtualFleetDeviceState[] devices =
+                snapshot != null && snapshot.devices != null
+                    ? snapshot.devices
+                    : new UavUsv.VirtualFleetDeviceState[0];
+            var poses = new List<UavUsv.VirtualPose>(devices.Length);
+            for (int i = 0; i < devices.Length; i++)
+            {
+                UavUsv.VirtualFleetDeviceState device = devices[i];
+                if (device == null || string.IsNullOrWhiteSpace(device.deviceCode))
+                    continue;
+                Vector3 enu =
+                    UavUsv.Coordinates.PresentationToEnu(device.position);
+                poses.Add(new UavUsv.VirtualPose
+                {
+                    deviceCode = device.deviceCode,
+                    deviceType = device.deviceType,
+                    eastM = enu.x,
+                    northM = enu.y,
+                    upM = enu.z,
+                    headingDeg = NormalizeHeading(-device.rotation.eulerAngles.y),
+                    speedMps = 0f,
+                    state = device.status,
+                    valid = true
+                });
+            }
+            return poses.ToArray();
         }
 
         private static string[] BuildDeviceCodes(UavUsv.VirtualFleetConfig config)
@@ -916,7 +959,18 @@ namespace UavUsv.PlatformTools
             public int usvCount;
             public int targetCount;
             public string[] deviceCodes;
+            public string initialPosesCoordinateFrame;
+            public FleetOriginPayload fleetOrigin;
+            public UavUsv.VirtualPose[] initialPoses;
             public string missionState;
+        }
+
+        [Serializable]
+        private sealed class FleetOriginPayload
+        {
+            public double eastM;
+            public double northM;
+            public double upM;
         }
 
         [Serializable]
