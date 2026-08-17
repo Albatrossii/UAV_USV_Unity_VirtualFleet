@@ -386,7 +386,7 @@ namespace UavUsv.PlatformTools
             CalculateGroupFrame(out groupCenter, out spread);
             const float elevationDegrees = 55f;
             const float overviewFov = 52f;
-            const float frameMargin = .92f;
+            const float frameMargin = 1.18f;
             float verticalHalfFov = overviewFov * Mathf.Deg2Rad * .5f;
             float aspect = observedCamera
                 ? Mathf.Max(.75f, observedCamera.aspect)
@@ -404,7 +404,7 @@ namespace UavUsv.PlatformTools
                 Mathf.Tan(verticalHalfFov)
             );
             float distance = Mathf.Clamp(
-                Mathf.Max(horizontalDistance, verticalDistance) * frameMargin + 2f,
+                Mathf.Max(horizontalDistance, verticalDistance) * frameMargin + 5f,
                 14f,
                 220f
             );
