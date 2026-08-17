@@ -384,34 +384,41 @@ namespace UavUsv.PlatformTools
             Vector3 groupCenter;
             float spread;
             CalculateGroupFrame(out groupCenter, out spread);
-            int deviceCount = Mathf.Max(1, sceneTargets.Count);
-            float baseDistance = deviceCount <= 8
-                ? 26f
-                : deviceCount <= 24
-                    ? 36f
-                    : deviceCount <= 80
-                        ? 48f
-                        : 60f;
-            float spreadMultiplier = deviceCount <= 8 ? 1.8f : 1.25f;
+            const float elevationDegrees = 55f;
+            const float overviewFov = 52f;
+            const float frameMargin = .92f;
+            float verticalHalfFov = overviewFov * Mathf.Deg2Rad * .5f;
+            float aspect = observedCamera
+                ? Mathf.Max(.75f, observedCamera.aspect)
+                : 1.2f;
+            float horizontalHalfFov = Mathf.Atan(
+                Mathf.Tan(verticalHalfFov) * aspect
+            );
+            float groundProjection = Mathf.Sin(elevationDegrees * Mathf.Deg2Rad);
+            float horizontalDistance = spread / Mathf.Max(
+                .05f,
+                Mathf.Tan(horizontalHalfFov)
+            );
+            float verticalDistance = spread * groundProjection / Mathf.Max(
+                .05f,
+                Mathf.Tan(verticalHalfFov)
+            );
             float distance = Mathf.Clamp(
-                baseDistance + spread * spreadMultiplier,
-                baseDistance,
+                Mathf.Max(horizontalDistance, verticalDistance) * frameMargin + 2f,
+                14f,
                 220f
             );
-            Vector3 offset = Quaternion.Euler(55f, -35f, 0f) * Vector3.back * distance;
+            Vector3 offset = Quaternion.Euler(
+                elevationDegrees,
+                -35f,
+                0f
+            ) * Vector3.back * distance;
             focus = groupCenter + Vector3.up * 1.2f;
             position = focus + offset;
-            float baseFov = deviceCount <= 8
-                ? 44f
-                : deviceCount <= 24
-                    ? 48f
-                    : deviceCount <= 80
-                        ? 52f
-                        : 56f;
             desiredFieldOfView = Mathf.Clamp(
-                baseFov + Mathf.InverseLerp(16f, 120f, spread) * 8f,
-                baseFov,
-                64f
+                overviewFov,
+                42f,
+                60f
             );
         }
 
