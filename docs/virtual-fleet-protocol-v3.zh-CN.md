@@ -727,24 +727,27 @@ formationType
 
 ## 13. 联调验收清单
 
-- [ ] `platformBridgeReady` 返回协议版本和能力列表；
-- [ ] `loadScenario` 支持两个算法；
-- [ ] 前端不发送 `initialHeadingDeg` 和 `formationType`；
-- [ ] `initialSpeedMps` 若存在，按真实 `m/s` 解释；
-- [ ] 前端输入速度不超过对应设备上限；
-- [ ] Unity 使用 `PresentationCoordinateScale` 转换内部速度；
-- [ ] 相同 `seed` 能复现初始布局；
-- [ ] `ApplyPoseBatch` 能正确回执 `requestId`；
-- [ ] `ApplyPoseBatch.speedMps` 用于速度校验或状态显示；
-- [ ] UAV 速度不会超过 15 m/s；
-- [ ] USV 速度不会超过 2 m/s；
-- [ ] 旧 `sequence` 会被拒绝；
-- [ ] 未知设备不会导致整批失败；
-- [ ] GB-SFLA-CS 能驱动围捕轨迹；
-- [ ] ESCORT_GUARD 能驱动护航轨迹；
-- [ ] `missionStateChanged` 状态正确；
-- [ ] `cameraChanged` 的 `requestId` 与请求一致；
-- [ ] 任务运行中不能修改设备数量；
-- [ ] 任务运行中不能重新生成场景；
-- [ ] 100 UAV + 100 USV 能稳定运行；
-- [ ] 全流程不连接 ROS。
+- [x] `platformBridgeReady` 返回协议版本和能力列表；
+- [x] `loadScenario` 支持两个算法；
+- [x] 前端不发送 `initialHeadingDeg` 和 `formationType`；
+- [x] `initialSpeedMps` 若存在，按真实 `m/s` 解释；
+- [x] 前端输入速度不超过对应设备上限；
+- [x] Unity 使用 `PresentationCoordinateScale` 转换内部速度；
+- [x] 相同 `seed` 能复现初始布局；
+- [x] `ApplyPoseBatch` 能正确回执 `requestId`；
+- [x] `ApplyPoseBatch.speedMps` 用于速度校验或状态显示；
+- [x] UAV 速度不会超过 15 m/s；
+- [x] USV 速度不会超过 2 m/s；
+- [x] 旧 `sequence` 会被拒绝；
+- [x] 未知设备不会导致整批失败；
+- [x] GB-SFLA-CS 能驱动围捕轨迹；
+- [x] ESCORT_GUARD 能驱动护航轨迹；
+- [x] `missionStateChanged` 状态正确；
+- [x] `cameraChanged` 的 `requestId` 与请求一致；
+- [x] 任务运行中不能修改设备数量；
+- [x] 任务运行中不能重新生成场景；
+- [x] 100 UAV + 100 USV 能稳定运行；
+- [x] 全流程不连接 ROS。
+
+补充验证：Python 适配层 `11/11` 测试通过；算法首帧使用 Unity
+返回的 `initialPoses`，后续帧按 sequence 顺序连续发送。
