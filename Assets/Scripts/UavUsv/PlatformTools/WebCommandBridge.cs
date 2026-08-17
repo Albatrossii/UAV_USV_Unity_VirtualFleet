@@ -213,6 +213,18 @@ namespace UavUsv.PlatformTools
             );
         }
 
+        public void SetVirtualFleetMissionState(string state)
+        {
+            if (EnsureObserver())
+                observer.SetMissionState(state);
+        }
+
+        public void ResetVirtualFleetTrails()
+        {
+            if (EnsureObserver())
+                observer.ResetFleetTrails();
+        }
+
         private bool EnsureVehicleController()
         {
             if (!vehicleController)

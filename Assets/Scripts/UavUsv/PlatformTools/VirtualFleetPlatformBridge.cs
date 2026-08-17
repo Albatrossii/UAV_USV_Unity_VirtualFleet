@@ -91,18 +91,21 @@ namespace UavUsv.PlatformTools
                 case "missionstart":
                     runtime.StartMission();
                     missionState = MissionState.Running;
+                    SetPresentationMissionState("RUNNING");
                     state = "RUNNING";
                     detail = "Virtual fleet mission started";
                     return true;
                 case "missionpause":
                     runtime.PauseMission();
                     missionState = MissionState.Paused;
+                    SetPresentationMissionState("PAUSED");
                     state = "PAUSED";
                     detail = "Virtual fleet mission paused";
                     return true;
                 case "missionresume":
                     runtime.ResumeMission();
                     missionState = MissionState.Running;
+                    SetPresentationMissionState("RUNNING");
                     state = "RUNNING";
                     detail = "Virtual fleet mission resumed";
                     return true;
@@ -112,6 +115,7 @@ namespace UavUsv.PlatformTools
                 case "missioncancel":
                     runtime.StopMission();
                     missionState = MissionState.Stopped;
+                    SetPresentationMissionState("STOPPED");
                     state = command == "missioncomplete"
                         ? "COMPLETED"
                         : command == "missionfail"
@@ -125,6 +129,7 @@ namespace UavUsv.PlatformTools
                     runtime.ResetMission();
                     missionState = MissionState.Stopped;
                     lastSequence = -1;
+                    ResetPresentationTrails();
                     state = "STOPPED";
                     detail = "Virtual fleet mission reset";
                     return true;
@@ -350,6 +355,7 @@ namespace UavUsv.PlatformTools
             currentRunId = currentConfig.runId;
             lastSequence = -1;
             missionState = MissionState.Stopped;
+            ResetPresentationTrails();
             runtime.Configure(currentConfig);
             runtime.Regenerate();
             EmitScenarioReady(message.requestId);
@@ -381,6 +387,7 @@ namespace UavUsv.PlatformTools
             currentConfig.seed = message.payload.seed;
             currentRunId = currentConfig.runId;
             lastSequence = -1;
+            ResetPresentationTrails();
             runtime.Configure(currentConfig);
             runtime.Regenerate();
             missionState = MissionState.Stopped;
@@ -529,6 +536,10 @@ namespace UavUsv.PlatformTools
             missionState = message.type == VirtualFleetMessageTypes.MissionReset
                 ? MissionState.Stopped
                 : nextState;
+            if (message.type == VirtualFleetMessageTypes.MissionReset)
+                ResetPresentationTrails();
+            else
+                SetPresentationMissionState(StateName(missionState));
             Emit(new MissionStateResponse
             {
                 type = "missionStateChanged",
@@ -541,6 +552,22 @@ namespace UavUsv.PlatformTools
                     missionState = StateName(missionState)
                 }
             });
+        }
+
+        private void ResetPresentationTrails()
+        {
+            if (!cameraBridge)
+                cameraBridge = FindObjectOfType<WebCommandBridge>();
+            if (cameraBridge)
+                cameraBridge.ResetVirtualFleetTrails();
+        }
+
+        private void SetPresentationMissionState(string state)
+        {
+            if (!cameraBridge)
+                cameraBridge = FindObjectOfType<WebCommandBridge>();
+            if (cameraBridge)
+                cameraBridge.SetVirtualFleetMissionState(state);
         }
 
         private void EmitScenarioReady(string requestId)
