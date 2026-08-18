@@ -14,6 +14,8 @@ namespace UavUsv.Editor.Tools
     {
         private const string ScenePath = "Assets/Scenes/UavUsvDemo.unity";
         private const string VirtualFleetScenePath = "Assets/Scenes/UavUsvVirtualFleet.unity";
+        private const string VirtualFleetIndexTemplatePath =
+            "Assets/Editor/Templates/VueWebGlVirtualFleet.index.html";
 
         [MenuItem("UAV-USV/Tools/Build Vue WebGL")]
         public static void Build()
@@ -65,12 +67,14 @@ namespace UavUsv.Editor.Tools
 
             string requestedOutput = Environment.GetEnvironmentVariable("UAV_USV_WEBGL_OUTPUT");
             string outputPath = Path.GetFullPath(string.IsNullOrWhiteSpace(requestedOutput)
-                ? @"C:\Users\86188\Desktop\mxy\UAV_USV_Platform\frontend\public\unity"
+                ? @"C:\Users\86188\Desktop\mxy\UAV_USV_Platform\frontend\public\unity-virtual-fleet"
                 : requestedOutput);
             string integrationIndexPath = Path.Combine(outputPath, "index.html");
             string integrationIndex = File.Exists(integrationIndexPath)
                 ? File.ReadAllText(integrationIndexPath)
-                : string.Empty;
+                : File.Exists(VirtualFleetIndexTemplatePath)
+                    ? File.ReadAllText(VirtualFleetIndexTemplatePath)
+                    : string.Empty;
 
             Directory.CreateDirectory(outputPath);
             try
