@@ -109,6 +109,9 @@ namespace UavUsv
 
         private void OnGUI()
         {
+            if (Application.platform == RuntimePlatform.WebGLPlayer)
+                return;
+
             float uiScale = RuntimeGuiScale();
             if (!visible)
             {

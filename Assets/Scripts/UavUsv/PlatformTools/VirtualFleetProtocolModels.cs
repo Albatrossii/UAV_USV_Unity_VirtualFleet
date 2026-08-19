@@ -88,6 +88,8 @@ namespace UavUsv.PlatformTools
         public float initialSpeedMps;
         public float initialHeadingDeg;
         public int seed;
+        public string initialPosesCoordinateFrame;
+        public UavUsv.VirtualPose[] initialPoses;
     }
 
     [Serializable]

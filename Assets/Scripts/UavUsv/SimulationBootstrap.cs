@@ -810,7 +810,7 @@ namespace UavUsv
             pip.usvs = usvs;
             pip.uavs = uavs;
             pip.lookAt = enemy;
-            pip.visible = true;
+            pip.visible = Application.platform != RuntimePlatform.WebGLPlayer;
             pip.preferGazeboStream = true;
             pip.usvCameraHeight = UsvCameraHeight;
             pip.usvCameraForward = UsvCameraForward;
