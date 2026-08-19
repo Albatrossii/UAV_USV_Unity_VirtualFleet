@@ -662,7 +662,13 @@ namespace UavUsv.PlatformTools
                 formationType = AutomaticFormation(payload.algorithmCode),
                 initialSpeedMps = payload.initialSpeedMps,
                 initialHeadingDeg = payload.initialHeadingDeg,
-                seed = payload.seed
+                seed = payload.seed,
+                initialPosesCoordinateFrame = string.IsNullOrWhiteSpace(
+                    payload.initialPosesCoordinateFrame
+                )
+                    ? VirtualFleetProtocol.GlobalCoordinateFrame
+                    : payload.initialPosesCoordinateFrame,
+                initialPoses = payload.initialPoses
             };
         }
 
