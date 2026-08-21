@@ -61,6 +61,7 @@ namespace UavUsv
     {
         public string deviceCode;
         public string deviceType;
+        public string targetType;
         public float eastM;
         public float northM;
         public float upM;
@@ -90,6 +91,8 @@ namespace UavUsv
         public long runId;
         public long sequence;
         public int appliedCount;
+        public int adjustedCount;
+        public string[] safetyAdjustments;
         public string[] missingDeviceCodes;
         public string[] unknownDeviceCodes;
     }

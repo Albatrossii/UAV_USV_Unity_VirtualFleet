@@ -12,13 +12,18 @@ namespace UavUsv
     {
         public const int DefaultUavCount = 3;
         public const int DefaultUsvCount = 3;
-        public const int MaximumUavCount = 100;
-        public const int MaximumUsvCount = 100;
+        public const int MaximumUavCount = 128;
+        public const int MaximumUsvCount = 128;
+        public const int MaximumTargetCount = 12;
         public const int DefaultRandomSeed = 20260814;
 
         private readonly List<VirtualFleetDeviceState> uavs = new List<VirtualFleetDeviceState>();
         private readonly List<VirtualFleetDeviceState> usvs = new List<VirtualFleetDeviceState>();
         private readonly List<VirtualFleetDeviceState> targets = new List<VirtualFleetDeviceState>();
+        private readonly HashSet<string> receivedRuntimePose =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Vector3> renderVelocities =
+            new Dictionary<string, Vector3>(StringComparer.OrdinalIgnoreCase);
         private int nextUavNumber = 1;
         private int nextUsvNumber = 1;
         private int currentRandomSeed = DefaultRandomSeed;
@@ -60,7 +65,9 @@ namespace UavUsv
         public void Initialize(
             int uavCount = DefaultUavCount,
             int usvCount = DefaultUsvCount,
-            int seed = DefaultRandomSeed)
+            int seed = DefaultRandomSeed,
+            int targetCount = 1,
+            VirtualPose[] initialPoses = null)
         {
             if (!CanModifyFleet)
                 return;
@@ -76,7 +83,9 @@ namespace UavUsv
                 AddUavInternal();
             for (int i = 0; i < Mathf.Clamp(usvCount, 1, MaximumUsvCount); i++)
                 AddUsvInternal();
-            AddTargetInternal();
+            int safeTargetCount = Mathf.Clamp(targetCount, 1, MaximumTargetCount);
+            for (int i = 0; i < safeTargetCount; i++)
+                AddTargetInternal(TargetTypeFor(i, initialPoses));
             NotifyFleetChanged();
         }
 
@@ -90,12 +99,60 @@ namespace UavUsv
             if (state == null || !state.transform)
                 return false;
 
-            state.transform.SetPositionAndRotation(position, rotation);
+            // The first authoritative pose establishes the scene immediately.
+            // Later 10 Hz algorithm samples are render-interpolated in Update,
+            // avoiding the visible stop/start motion caused by transform snaps.
+            if (receivedRuntimePose.Add(state.deviceCode))
+            {
+                state.transform.SetPositionAndRotation(position, rotation);
+                renderVelocities[state.deviceCode] = Vector3.zero;
+            }
             state.position = position;
             state.rotation = rotation;
             if (!string.IsNullOrWhiteSpace(status))
                 state.status = status.Trim().ToUpperInvariant();
             return true;
+        }
+
+        private void Update()
+        {
+            Interpolate(uavs);
+            Interpolate(usvs);
+            Interpolate(targets);
+        }
+
+        private void Interpolate(List<VirtualFleetDeviceState> devices)
+        {
+            for (int i = 0; i < devices.Count; i++)
+            {
+                VirtualFleetDeviceState state = devices[i];
+                if (state == null || !state.transform)
+                    continue;
+                bool aircraft = string.Equals(
+                    state.deviceType,
+                    "UAV",
+                    StringComparison.OrdinalIgnoreCase
+                );
+                float smoothTime = aircraft ? .065f : .105f;
+                float physicalMaximum = aircraft ? 3.15f : .90f;
+                if (!renderVelocities.TryGetValue(state.deviceCode, out Vector3 velocity))
+                    velocity = Vector3.zero;
+                state.transform.position = Vector3.SmoothDamp(
+                    state.transform.position,
+                    state.position,
+                    ref velocity,
+                    smoothTime,
+                    physicalMaximum,
+                    Time.deltaTime
+                );
+                renderVelocities[state.deviceCode] = velocity;
+                float turnRate = aircraft ? 220f : 115f;
+                state.transform.rotation = Quaternion.RotateTowards(
+                    state.transform.rotation,
+                    state.rotation,
+                    turnRate * Time.deltaTime
+                );
+            }
         }
 
         public bool TryApplyTargetPose(
@@ -176,7 +233,8 @@ namespace UavUsv
             Initialize(
                 Mathf.Max(1, uavs.Count),
                 Mathf.Max(1, usvs.Count),
-                currentRandomSeed
+                currentRandomSeed,
+                Mathf.Max(1, targets.Count)
             );
             SetMissionState(VirtualFleetMissionState.Stopped);
         }
@@ -212,15 +270,32 @@ namespace UavUsv
             usvs.Add(CreateState(code, "USV", model));
         }
 
-        private void AddTargetInternal()
+        private void AddTargetInternal(string targetType)
         {
-            const string code = "TARGET-001";
+            string code = "TARGET-" + (targets.Count + 1).ToString("000");
             Transform model = factory.Create(
                 VirtualFleetDeviceType.Target,
                 code,
-                targets.Count
+                targets.Count,
+                targetType
             );
             targets.Add(CreateState(code, "TARGET", model));
+        }
+
+        public Transform[] GetTargetTransforms()
+        {
+            return ToTransformArray(targets);
+        }
+
+        private static string TargetTypeFor(int index, VirtualPose[] initialPoses)
+        {
+            string code = "TARGET-" + (index + 1).ToString("000");
+            if (initialPoses != null)
+                for (int i = 0; i < initialPoses.Length; i++)
+                    if (initialPoses[i] != null &&
+                        string.Equals(initialPoses[i].deviceCode, code, StringComparison.OrdinalIgnoreCase))
+                        return initialPoses[i].targetType ?? initialPoses[i].state;
+            return "THREAT_TARGET";
         }
 
         private static VirtualFleetDeviceState CreateState(
@@ -251,6 +326,8 @@ namespace UavUsv
             if (state.transform)
                 Destroy(state.transform.gameObject);
             devices.RemoveAt(index);
+            receivedRuntimePose.Remove(state.deviceCode);
+            renderVelocities.Remove(state.deviceCode);
             NotifyFleetChanged();
             return true;
         }
@@ -268,6 +345,8 @@ namespace UavUsv
             uavs.Clear();
             usvs.Clear();
             targets.Clear();
+            receivedRuntimePose.Clear();
+            renderVelocities.Clear();
         }
 
         private void SetMissionState(VirtualFleetMissionState nextState)

@@ -701,7 +701,11 @@ namespace UavUsv
                 Transform pad = dronePads != null && i < dronePads.Length ? dronePads[i] : null;
                 if (pad)
                 {
-                    drone.SetParent(pad, false);
+                    // Match the system-overview Unity project: the presentation
+                    // environment (including the pad) is scaled to 0.18, while
+                    // the product UAV model remains at its real 1:1 scale.
+                    // Preserve world scale when attaching the UAV to the pad.
+                    drone.SetParent(pad, true);
                     drone.localPosition = new Vector3(0f, .28f, 0f);
                     drone.localRotation = Quaternion.identity;
                 }

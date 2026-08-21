@@ -52,7 +52,7 @@ namespace UavUsv
             targetTransform = value;
         }
 
-        public Transform Create(VirtualFleetDeviceType type, string deviceCode, int index)
+        public Transform Create(VirtualFleetDeviceType type, string deviceCode, int index, string targetType = null)
         {
             if (type == VirtualFleetDeviceType.Uav)
             {
@@ -68,9 +68,20 @@ namespace UavUsv
 
             if (type == VirtualFleetDeviceType.Target)
             {
-                Transform target = targetTransform;
-                if (!target)
-                    target = SimulationBootstrap.BuildVirtualTarget(deviceCode);
+                Transform target = index == 0 ? targetTransform : null;
+                bool protectedTarget = string.Equals(targetType, "ESCORT_TARGET", StringComparison.OrdinalIgnoreCase);
+                if (target && protectedTarget)
+                    target.gameObject.SetActive(false);
+                else if (target)
+                    // The shared scene enemy is hidden while TARGET-001 is an
+                    // escort target. A later capture scenario reuses that same
+                    // transform, so its active state must be restored explicitly.
+                    target.gameObject.SetActive(true);
+                if (!target || protectedTarget)
+                    target = protectedTarget
+                        ? SimulationBootstrap.BuildVirtualProtectedTarget(deviceCode)
+                        : SimulationBootstrap.BuildVirtualTarget(deviceCode);
+                target.gameObject.SetActive(true);
                 target.name = deviceCode;
                 Vector3 targetPosition = CreateRandomPosition(false, targetSpawnPositions);
                 target.SetPositionAndRotation(

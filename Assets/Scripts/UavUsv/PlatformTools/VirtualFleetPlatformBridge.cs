@@ -191,7 +191,13 @@ namespace UavUsv.PlatformTools
                     targetCount = input.targetCount > 0 ? input.targetCount : 1,
                     initialSpeedMps = input.initialSpeedMps,
                     initialHeadingDeg = input.initialHeadingDeg,
-                    seed = input.seed
+                    seed = input.seed,
+                    initialPosesCoordinateFrame = string.IsNullOrWhiteSpace(
+                        input.initialPosesCoordinateFrame
+                    )
+                        ? VirtualFleetProtocol.GlobalCoordinateFrame
+                        : input.initialPosesCoordinateFrame,
+                    initialPoses = input.initialPoses
                 }
             });
         }
@@ -424,6 +430,8 @@ namespace UavUsv.PlatformTools
                     runId = applyResult.runId,
                     sequence = lastSequence,
                     appliedCount = applyResult.appliedCount,
+                    adjustedCount = applyResult.adjustedCount,
+                    safetyAdjustments = applyResult.safetyAdjustments ?? new string[0],
                     missingDeviceCodes = applyResult.missingDeviceCodes ?? new string[0],
                     unknownDeviceCodes = applyResult.unknownDeviceCodes ?? new string[0],
                     trackedDeviceCode = trackedDevice != null
@@ -591,8 +599,8 @@ namespace UavUsv.PlatformTools
                     initialPosesCoordinateFrame = "GLOBAL_ENU",
                     fleetOrigin = new FleetOriginPayload
                     {
-                        eastM = -75.0,
-                        northM = -310.0,
+                        eastM = -150.0,
+                        northM = -275.0,
                         upM = 0.0
                     },
                     initialPoses = BuildInitialPoses(),
@@ -844,6 +852,8 @@ namespace UavUsv.PlatformTools
             public float initialSpeedMps;
             public float initialHeadingDeg;
             public int seed;
+            public string initialPosesCoordinateFrame;
+            public UavUsv.VirtualPose[] initialPoses;
         }
 
         [Serializable]
@@ -997,6 +1007,8 @@ namespace UavUsv.PlatformTools
             public long runId;
             public long sequence;
             public int appliedCount;
+            public int adjustedCount;
+            public string[] safetyAdjustments;
             public string[] missingDeviceCodes;
             public string[] unknownDeviceCodes;
             public string trackedDeviceCode;
