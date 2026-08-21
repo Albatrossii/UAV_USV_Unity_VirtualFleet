@@ -40,11 +40,32 @@ namespace UavUsv.PlatformTools
         private bool trailSampleLogged;
         private int lastTrailDeviceCount = -1;
         private bool trailRecordingEnabled;
+        private float zoomScale = 1f;
+        private float orbitYaw;
+        private float orbitPitch;
+        private Vector3 panOffset;
+        private float lastPrimaryClickAt = -1f;
+        private float previousPinchDistance;
+        private Vector2 previousPinchCenter;
+        private Vector3 lastFocusPoint;
+        private Vector3 frozenBasePosition;
+        private Vector3 frozenBaseFocus;
+        private Vector3 previousMousePosition;
+        private bool mouseDragActive;
+        private bool manualView;
+        private bool hasLastFocus;
+        private bool snapNextView;
+        private const float MinZoomScale = .42f;
+        private const float MaxZoomScale = 2.25f;
 
         private const int MaxTrailPoints = 180;
         private const float TrailSampleSeconds = .2f;
         private const float TrailMinDistance = 1.25f;
         private const float TrailMaxJumpDistance = 4f;
+        // Product decision: algorithm simulation currently presents only the
+        // live fleet. Keep trajectory recording and rendering dormant in all
+        // camera modes until a dedicated UI switch is introduced.
+        private static readonly bool FleetTrailsEnabled = false;
 
         public string CurrentDeviceCode { get; private set; } = string.Empty;
         public string CurrentModeName => ModeName(mode);
@@ -58,6 +79,11 @@ namespace UavUsv.PlatformTools
             chaseCamera = chase;
             fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
             RefreshSceneTargets();
+            // WebGL simulation is interactive from the first rendered frame.
+            // Waiting for an explicit overview command leaves the legacy chase
+            // camera active and makes wheel/drag appear broken before a user
+            // presses the global-view button.
+            SetOverview();
         }
 
         public bool TrySelectDevice(
@@ -142,8 +168,80 @@ namespace UavUsv.PlatformTools
             selectedSubject = null;
             CurrentDeviceCode = string.Empty;
             mode = ObservationMode.Overview;
+            ResetInteraction();
+            // A UI reset must be immediately visible even after a long manual
+            // pan/zoom.  Interpolating from an off-centre frozen view made the
+            // global-view button look unresponsive for several frames.
+            snapNextView = true;
             ActivateObserver();
             RefreshTrailVisibility();
+        }
+
+        public void FitAll()
+        {
+            SetOverview();
+        }
+
+        public void AdjustZoom(float steps)
+        {
+            if (Mathf.Abs(steps) < .001f) return;
+            zoomScale = Mathf.Clamp(zoomScale * Mathf.Exp(-steps * .115f), MinZoomScale, MaxZoomScale);
+        }
+
+        private void AdjustZoomAtScreenPoint(float steps, Vector2 screenPoint)
+        {
+            if (Mathf.Abs(steps) < .001f) return;
+            EnterManualView();
+            float oldScale = zoomScale;
+            Vector3 anchor;
+            bool hasAnchor = TryScreenAnchor(screenPoint, out anchor);
+            AdjustZoom(steps);
+            if (hasAnchor && oldScale > .001f)
+            {
+                float ratio = zoomScale / oldScale;
+                Vector3 shift = (anchor - frozenBaseFocus) * (1f - ratio);
+                shift.y = 0f;
+                panOffset += shift;
+            }
+        }
+
+        private bool TryScreenAnchor(Vector2 screenPoint, out Vector3 anchor)
+        {
+            float planeHeight = hasLastFocus ? lastFocusPoint.y : 0f;
+            Plane plane = new Plane(Vector3.up, new Vector3(0f, planeHeight, 0f));
+            Ray ray = observedCamera.ScreenPointToRay(screenPoint);
+            if (plane.Raycast(ray, out float distance))
+            {
+                anchor = ray.GetPoint(distance);
+                return true;
+            }
+            anchor = hasLastFocus ? lastFocusPoint : Vector3.zero;
+            return false;
+        }
+
+        private void EnterManualView()
+        {
+            if (manualView) return;
+            manualView = true;
+            frozenBasePosition = transform.position;
+            frozenBaseFocus = hasLastFocus
+                ? lastFocusPoint
+                : transform.position + transform.forward * 40f;
+            zoomScale = 1f;
+            orbitYaw = 0f;
+            orbitPitch = 0f;
+            panOffset = Vector3.zero;
+        }
+
+        private void ResetInteraction()
+        {
+            zoomScale = 1f;
+            orbitYaw = 0f;
+            orbitPitch = 0f;
+            panOffset = Vector3.zero;
+            previousPinchDistance = 0f;
+            previousPinchCenter = Vector2.zero;
+            manualView = false;
         }
 
         public void SetLighthouse()
@@ -167,6 +265,11 @@ namespace UavUsv.PlatformTools
 
         public void SetMissionState(string state)
         {
+            if (!FleetTrailsEnabled)
+            {
+                ResetFleetTrails();
+                return;
+            }
             string normalized = (state ?? string.Empty).Trim().ToUpperInvariant();
             if (normalized == "RUNNING" && !trailRecordingEnabled)
                 ResetFleetTrails();
@@ -222,6 +325,7 @@ namespace UavUsv.PlatformTools
             if (mode == ObservationMode.None || !observedCamera)
                 return;
 
+            HandleInteractiveInput();
             RefreshSceneTargets();
             UpdateFleetTrails();
             Vector3 desiredPosition;
@@ -234,6 +338,16 @@ namespace UavUsv.PlatformTools
             else
                 CalculateOverview(out desiredPosition, out focusPoint);
 
+            if (manualView)
+            {
+                desiredPosition = frozenBasePosition;
+                focusPoint = frozenBaseFocus;
+            }
+
+            ApplyInteractiveTransform(ref desiredPosition, ref focusPoint);
+            lastFocusPoint = focusPoint;
+            hasLastFocus = true;
+
             if (mode == ObservationMode.Device && selectedSubject)
                 desiredPosition = ResolveDeviceOcclusion(focusPoint, desiredPosition);
             desiredPosition.y = Mathf.Max(desiredPosition.y, 2.4f);
@@ -241,6 +355,14 @@ namespace UavUsv.PlatformTools
                 focusPoint - desiredPosition,
                 Vector3.up
             );
+            if (snapNextView)
+            {
+                transform.position = desiredPosition;
+                transform.rotation = desiredRotation;
+                observedCamera.fieldOfView = desiredFieldOfView;
+                snapNextView = false;
+                return;
+            }
             float positionT = 1f - Mathf.Exp(-3.2f * Time.unscaledDeltaTime);
             float rotationT = 1f - Mathf.Exp(-4.8f * Time.unscaledDeltaTime);
             float fovT = 1f - Mathf.Exp(-3.5f * Time.unscaledDeltaTime);
@@ -251,6 +373,91 @@ namespace UavUsv.PlatformTools
                 desiredFieldOfView,
                 fovT
             );
+        }
+
+        private void HandleInteractiveInput()
+        {
+            AdjustZoomAtScreenPoint(Input.mouseScrollDelta.y, Input.mousePosition);
+            bool orbiting = Input.GetMouseButton(1);
+            bool panning = Input.GetMouseButton(2) || Input.GetMouseButton(0);
+            bool mouseDragging = orbiting || panning;
+            Vector2 mouseDelta = Vector2.zero;
+            if (mouseDragging)
+            {
+                Vector3 currentMousePosition = Input.mousePosition;
+                if (mouseDragActive)
+                    mouseDelta = currentMousePosition - previousMousePosition;
+                else
+                    mouseDragActive = true;
+                previousMousePosition = currentMousePosition;
+            }
+            else
+            {
+                mouseDragActive = false;
+            }
+            if (orbiting && mouseDelta.sqrMagnitude > .01f)
+            {
+                EnterManualView();
+                orbitYaw += mouseDelta.x * .18f;
+                orbitPitch = Mathf.Clamp(orbitPitch - mouseDelta.y * .15f, -28f, 38f);
+            }
+            if (panning && mouseDelta.sqrMagnitude > .01f)
+            {
+                EnterManualView();
+                float scale = Mathf.Clamp(Vector3.Distance(transform.position, lastFocusPoint) * .00085f, .012f, .12f);
+                Vector3 forward = Vector3.ProjectOnPlane(transform.forward, Vector3.up).normalized;
+                panOffset += (-transform.right * mouseDelta.x - forward * mouseDelta.y) * scale;
+                panOffset.y = 0f;
+            }
+            if (Input.GetMouseButtonDown(0) && !Input.GetKey(KeyCode.LeftShift))
+            {
+                float now = Time.unscaledTime;
+                if (now - lastPrimaryClickAt <= .32f) FitAll();
+                lastPrimaryClickAt = now;
+            }
+            if (Input.touchCount >= 2)
+            {
+                Touch first = Input.GetTouch(0);
+                Touch second = Input.GetTouch(1);
+                float distance = Vector2.Distance(first.position, second.position);
+                Vector2 pinchCenter = (first.position + second.position) * .5f;
+                if (previousPinchDistance > 0f)
+                {
+                    AdjustZoomAtScreenPoint(
+                        (distance - previousPinchDistance) / Mathf.Max(40f, Screen.dpi > 0f ? Screen.dpi : 160f) * 3f,
+                        pinchCenter
+                    );
+                    Vector2 centerDelta = pinchCenter - previousPinchCenter;
+                    float scale = Mathf.Clamp(Vector3.Distance(transform.position, lastFocusPoint) * .0015f, .018f, .24f);
+                    Vector3 forward = Vector3.ProjectOnPlane(transform.forward, Vector3.up).normalized;
+                    panOffset += (-transform.right * centerDelta.x - forward * centerDelta.y) * scale;
+                }
+                previousPinchDistance = distance;
+                previousPinchCenter = pinchCenter;
+            }
+            else
+            {
+                previousPinchDistance = 0f;
+                previousPinchCenter = Vector2.zero;
+                if (Input.touchCount == 1 && Input.GetTouch(0).phase == TouchPhase.Moved)
+                {
+                    EnterManualView();
+                    Vector2 delta = Input.GetTouch(0).deltaPosition;
+                    float scale = Mathf.Clamp(Vector3.Distance(transform.position, lastFocusPoint) * .0015f, .018f, .24f);
+                    Vector3 forward = Vector3.ProjectOnPlane(transform.forward, Vector3.up).normalized;
+                    panOffset += (-transform.right * delta.x - forward * delta.y) * scale;
+                }
+            }
+            if (Input.GetKeyDown(KeyCode.Home)) FitAll();
+        }
+
+        private void ApplyInteractiveTransform(ref Vector3 position, ref Vector3 focus)
+        {
+            focus += panOffset;
+            position += panOffset;
+            Vector3 offset = position - focus;
+            Quaternion rotation = Quaternion.Euler(orbitPitch, orbitYaw, 0f);
+            position = focus + rotation * offset.normalized * Mathf.Max(4f, offset.magnitude) * zoomScale;
         }
 
         private void CalculateDeviceView(out Vector3 position, out Vector3 focus)
@@ -384,7 +591,10 @@ namespace UavUsv.PlatformTools
             Vector3 groupCenter;
             float spread;
             CalculateGroupFrame(out groupCenter, out spread);
-            const float elevationDegrees = 55f;
+            // Product-level "global view" means an actual overhead tactical
+            // view.  Keep a two-degree tilt to avoid a LookRotation up-vector
+            // singularity while remaining visually top-down.
+            const float elevationDegrees = 88f;
             const float overviewFov = 52f;
             const float frameMargin = 1.18f;
             float verticalHalfFov = overviewFov * Mathf.Deg2Rad * .5f;
@@ -410,7 +620,7 @@ namespace UavUsv.PlatformTools
             );
             Vector3 offset = Quaternion.Euler(
                 elevationDegrees,
-                -35f,
+                0f,
                 0f
             ) * Vector3.back * distance;
             focus = groupCenter + Vector3.up * 1.2f;
@@ -447,28 +657,47 @@ namespace UavUsv.PlatformTools
         {
             center = Vector3.zero;
             int count = 0;
+            // Mission targets are the semantic centre of an experiment. This
+            // keeps the hostile/protected vessel in frame while the formation
+            // closes, instead of letting a large reserve fleet or the shore
+            // pull the camera centre away from the action.
             for (int i = 0; i < sceneTargets.Count; i++)
             {
                 Transform item = sceneTargets[i];
-                if (!item)
+                if (!item || !item.gameObject.activeInHierarchy ||
+                    !item.name.StartsWith("TARGET-", StringComparison.OrdinalIgnoreCase))
                     continue;
                 center += item.position;
                 count++;
             }
+            if (count > 0)
+                center /= count;
 
-            if (count == 0)
+            int allCount = 0;
+            Vector3 allCenter = Vector3.zero;
+            for (int i = 0; i < sceneTargets.Count; i++)
+            {
+                Transform item = sceneTargets[i];
+                if (!item || !item.gameObject.activeInHierarchy)
+                    continue;
+                allCenter += item.position;
+                allCount++;
+            }
+
+            if (allCount == 0)
             {
                 center = selectedSubject ? selectedSubject.position : Vector3.zero;
                 spread = 1f;
                 return;
             }
 
-            center /= count;
+            if (count == 0)
+                center = allCenter / allCount;
             spread = 1f;
             for (int i = 0; i < sceneTargets.Count; i++)
             {
                 Transform item = sceneTargets[i];
-                if (!item)
+                if (!item || !item.gameObject.activeInHierarchy)
                     continue;
                 Vector3 delta = item.position - center;
                 delta.y *= .35f;
@@ -509,6 +738,7 @@ namespace UavUsv.PlatformTools
 
             AddFleetTargets(fleetManager.GetUavTransforms());
             AddFleetTargets(fleetManager.GetUsvTransforms());
+            AddFleetTargets(fleetManager.GetTargetTransforms());
             SyncFleetTrails();
         }
 
@@ -519,13 +749,18 @@ namespace UavUsv.PlatformTools
             for (int i = 0; i < targets.Length; i++)
             {
                 Transform target = targets[i];
-                if (target && !sceneTargets.Contains(target))
+                if (target && target.gameObject.activeInHierarchy && !sceneTargets.Contains(target))
                     sceneTargets.Add(target);
             }
         }
 
         private void SyncFleetTrails()
         {
+            if (!FleetTrailsEnabled)
+            {
+                RefreshTrailVisibility();
+                return;
+            }
             if (!trailRoot)
             {
                 GameObject root = new GameObject("VirtualFleetTrails");
@@ -618,6 +853,11 @@ namespace UavUsv.PlatformTools
 
         private void UpdateFleetTrails()
         {
+            if (!FleetTrailsEnabled)
+            {
+                RefreshTrailVisibility();
+                return;
+            }
             if (Time.unscaledTime < nextTrailSampleAt)
                 return;
             nextTrailSampleAt = Time.unscaledTime + TrailSampleSeconds;
@@ -704,6 +944,7 @@ namespace UavUsv.PlatformTools
                 List<Vector3> points;
                 fleetTrailPoints.TryGetValue(pair.Key, out points);
                 pair.Value.enabled =
+                    FleetTrailsEnabled &&
                     mode == ObservationMode.Overview &&
                     points != null &&
                     points.Count > 1;

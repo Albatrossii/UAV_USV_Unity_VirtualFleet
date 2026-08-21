@@ -13,6 +13,7 @@ namespace UavUsv
         IVirtualFleetRuntime
     {
         [SerializeField] private VirtualFleetManager fleetManager;
+        [SerializeField] private TerrainNavigationSafety navigationSafety;
 
         public VirtualFleetManager FleetManager => fleetManager;
         public bool CanModifyFleet => fleetManager && fleetManager.CanModifyFleet;
@@ -26,9 +27,12 @@ namespace UavUsv
                 fleetManager = GetComponent<VirtualFleetManager>();
         }
 
-        public void Bind(VirtualFleetManager manager)
+        public void Bind(
+            VirtualFleetManager manager,
+            TerrainNavigationSafety safety = null)
         {
             fleetManager = manager;
+            navigationSafety = safety;
         }
 
         public void Configure(VirtualFleetConfig config)
@@ -54,8 +58,11 @@ namespace UavUsv
             fleetManager.Initialize(
                 CurrentConfig.uavCount,
                 CurrentConfig.usvCount,
-                CurrentConfig.seed
+                CurrentConfig.seed,
+                CurrentConfig.targetCount,
+                CurrentConfig.initialPoses
             );
+            SanitizeGeneratedFleet();
             ApplyInitialScenarioPoses();
             LastAppliedSequence = -1;
         }
@@ -68,6 +75,7 @@ namespace UavUsv
                 success = false,
                 runId = batch != null ? batch.runId : 0,
                 sequence = batch != null ? batch.sequence : 0,
+                safetyAdjustments = new string[0],
                 missingDeviceCodes = new string[0],
                 unknownDeviceCodes = new string[0]
             };
@@ -85,6 +93,7 @@ namespace UavUsv
 
             var missing = new System.Collections.Generic.List<string>();
             var unknown = new System.Collections.Generic.List<string>();
+            var adjustments = new System.Collections.Generic.List<string>();
             int applied = 0;
             VirtualPose[] poses = batch.vehicles ?? new VirtualPose[0];
             var seen = new System.Collections.Generic.HashSet<string>(
@@ -96,7 +105,8 @@ namespace UavUsv
                     poses[i],
                     false,
                     seen,
-                    unknown
+                    unknown,
+                    adjustments
                 );
             }
 
@@ -107,7 +117,8 @@ namespace UavUsv
                     targetPoses[i],
                     true,
                     seen,
-                    unknown
+                    unknown,
+                    adjustments
                 );
             }
 
@@ -119,6 +130,8 @@ namespace UavUsv
             result.code = "ok";
             result.message = "位姿批次已应用";
             result.appliedCount = applied;
+            result.adjustedCount = adjustments.Count;
+            result.safetyAdjustments = adjustments.ToArray();
             result.missingDeviceCodes = missing.ToArray();
             result.unknownDeviceCodes = unknown.ToArray();
             return result;
@@ -126,12 +139,16 @@ namespace UavUsv
 
         public bool AddUav()
         {
-            return fleetManager && fleetManager.AddUav();
+            bool added = fleetManager && fleetManager.AddUav();
+            if (added) SanitizeGeneratedFleet();
+            return added;
         }
 
         public bool AddUsv()
         {
-            return fleetManager && fleetManager.AddUsv();
+            bool added = fleetManager && fleetManager.AddUsv();
+            if (added) SanitizeGeneratedFleet();
+            return added;
         }
 
         public bool RemoveUav(string deviceCode)
@@ -204,7 +221,7 @@ namespace UavUsv
             if (config.uavCount < 1 || config.uavCount > VirtualFleetManager.MaximumUavCount ||
                 config.usvCount < 1 || config.usvCount > VirtualFleetManager.MaximumUsvCount)
                 throw new ArgumentException("invalid_count");
-            if (config.targetCount != 1)
+            if (config.targetCount < 1 || config.targetCount > VirtualFleetManager.MaximumTargetCount)
                 throw new ArgumentException("invalid_target_count");
             if (config.initialSpeedMps < 0f)
                 throw new ArgumentException("invalid_speed");
@@ -268,6 +285,30 @@ namespace UavUsv
                     -NormalizeHeading(pose.headingDeg),
                     0f
                 );
+                VirtualFleetDeviceState known = FindState(pose.deviceCode);
+                string deviceType = known != null
+                    ? known.deviceType
+                    : pose.deviceType;
+                if (!ResolveSafePose(
+                        deviceType,
+                        known != null ? known.position : position,
+                        position,
+                        true,
+                        out position,
+                        out string adjustment))
+                {
+                    Debug.LogWarning(
+                        "[VirtualFleet] Rejected unsafe initial pose for " +
+                        pose.deviceCode
+                    );
+                    continue;
+                }
+                if (!string.IsNullOrEmpty(adjustment))
+                    Debug.Log(
+                        "[VirtualFleet] Adjusted initial pose " +
+                        pose.deviceCode + " reason=" + adjustment
+                    );
+
                 bool updated = pose.deviceType != null &&
                     pose.deviceType.Equals("TARGET", StringComparison.OrdinalIgnoreCase)
                     ? fleetManager.TryApplyTargetPose(
@@ -310,9 +351,10 @@ namespace UavUsv
             VirtualPose pose,
             bool target,
             System.Collections.Generic.HashSet<string> seen,
-            System.Collections.Generic.List<string> unknown)
+            System.Collections.Generic.List<string> unknown,
+            System.Collections.Generic.List<string> adjustments)
         {
-            if (pose == null || !pose.valid || string.IsNullOrWhiteSpace(pose.deviceCode))
+            if (pose == null || string.IsNullOrWhiteSpace(pose.deviceCode))
                 return 0;
 
             string code = pose.deviceCode.Trim();
@@ -331,6 +373,27 @@ namespace UavUsv
                 pose.northM,
                 pose.upM
             );
+            if (!ResolveSafePose(
+                    known.deviceType,
+                    known.position,
+                    position,
+                    false,
+                    out position,
+                    out string adjustment))
+            {
+                adjustments.Add(code + ":NO_SAFE_POSITION");
+                return 0;
+            }
+
+            if (target && string.Equals(pose.state, "HIDDEN", StringComparison.OrdinalIgnoreCase))
+            {
+                if (known.transform) known.transform.gameObject.SetActive(false);
+                return 1;
+            }
+            if (target && known.transform && !known.transform.gameObject.activeSelf)
+                known.transform.gameObject.SetActive(true);
+            if (!string.IsNullOrEmpty(adjustment))
+                adjustments.Add(code + ":" + adjustment);
             Quaternion rotation = Quaternion.Euler(
                 0f,
                 NormalizeHeading(pose.headingDeg) - 90f,
@@ -340,6 +403,62 @@ namespace UavUsv
                 ? TryApplyTargetPose(code, position, rotation, pose.state)
                 : fleetManager.TryApplyPose(code, position, rotation, pose.state);
             return applied ? 1 : 0;
+        }
+
+        private bool ResolveSafePose(
+            string deviceType,
+            Vector3 previous,
+            Vector3 proposed,
+            bool initialPlacement,
+            out Vector3 resolved,
+            out string reason)
+        {
+            if (!navigationSafety)
+            {
+                resolved = proposed;
+                reason = "";
+                return true;
+            }
+            return navigationSafety.TryResolvePose(
+                deviceType,
+                previous,
+                proposed,
+                initialPlacement,
+                out resolved,
+                out reason
+            );
+        }
+
+        private void SanitizeGeneratedFleet()
+        {
+            if (!fleetManager || !navigationSafety)
+                return;
+            VirtualFleetSnapshot snapshot = fleetManager.GetSnapshot();
+            if (snapshot == null || snapshot.devices == null)
+                return;
+
+            for (int i = 0; i < snapshot.devices.Length; i++)
+            {
+                VirtualFleetDeviceState device = snapshot.devices[i];
+                if (device == null)
+                    continue;
+                if (!ResolveSafePose(
+                        device.deviceType,
+                        device.position,
+                        device.position,
+                        true,
+                        out Vector3 safe,
+                        out string reason))
+                    continue;
+                if (string.IsNullOrEmpty(reason))
+                    continue;
+                fleetManager.TryApplyPose(
+                    device.deviceCode,
+                    safe,
+                    device.rotation,
+                    device.status
+                );
+            }
         }
 
         private static void AddMissingCodes(

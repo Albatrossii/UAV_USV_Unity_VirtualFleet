@@ -64,7 +64,14 @@ namespace UavUsv
                 EnvironmentPresentationScale
             );
             Transform[] uavPads = BuildIslandUavBase();
-            BuildShoreCommandBase();
+            Transform shoreCommandBase = BuildShoreCommandBase();
+            TerrainNavigationSafety navigationSafety =
+                gameObject.AddComponent<TerrainNavigationSafety>();
+            navigationSafety.Configure(
+                islandTerrain ? islandTerrain.transform : null,
+                uavPads != null && uavPads.Length > 0 ? uavPads[0].parent : null,
+                shoreCommandBase
+            );
 
             Vector3[] usvPos =
             {
@@ -77,6 +84,11 @@ namespace UavUsv
 
             Transform friendly = BuildFriendlyShip();
             Place(friendly, PresentationEnu(-150f, -355f, 0f), .25f);
+            // This repository owns the algorithm-simulation WebGL. Protected
+            // vessels are created and counted by VirtualVehicleFactory; the
+            // legacy demo friendly ship is not protocol-managed and otherwise
+            // looks like an extra escort objective.
+            friendly.gameObject.SetActive(false);
             Transform enemy = BuildEnemyShip();
             Place(enemy, PresentationEnu(-80f, -345f, 0f), 2.60f);
 
@@ -89,7 +101,7 @@ namespace UavUsv
             );
             VirtualFleetScenarioController scenarioController =
                 gameObject.AddComponent<VirtualFleetScenarioController>();
-            scenarioController.Bind(virtualFleet);
+            scenarioController.Bind(virtualFleet, navigationSafety);
             Transform[] usvs = virtualFleet.GetUsvTransforms();
             Transform[] uavs = virtualFleet.GetUavTransforms();
             statusUavs = uavs;
@@ -163,12 +175,14 @@ namespace UavUsv
                     virtualFleetChaseCamera.companion = uavs[0];
 
                 var subjects = new List<Transform>(
-                    usvs.Length + uavs.Length + 2
+                    usvs.Length + uavs.Length + 1
                 );
                 subjects.AddRange(usvs);
                 subjects.AddRange(uavs);
-                if (virtualFleetFriendlyTarget)
-                    subjects.Add(virtualFleetFriendlyTarget);
+                // The fixed friendly presentation vessel is not part of a
+                // virtual-fleet capture run. Including it in overview bounds
+                // pulls the camera away from the hostile target and makes the
+                // containment ring appear off-centre.
                 if (virtualFleetEnemyTarget)
                     subjects.Add(virtualFleetEnemyTarget);
                 virtualFleetChaseCamera.SetGroupTargets(subjects.ToArray());
@@ -379,7 +393,7 @@ namespace UavUsv
             return pads;
         }
 
-        private static void BuildShoreCommandBase()
+        private static Transform BuildShoreCommandBase()
         {
             Transform root = new GameObject("shore_command_base").transform;
             Place(root, EnvironmentEnu(-35f, -190f, 17.5f), .559f);
@@ -413,6 +427,7 @@ namespace UavUsv
             Cylinder("antenna_mast", root, -5f, 3f, 13.5f, .18f, 10f, metal);
             Box("generator", root, -6f, -5f, 9.1f, 3.8f, 2.6f, 1.8f, roof);
             Box("equipment_console", root, 5f, -4.8f, 9f, 3f, 1.5f, 1.6f, metal);
+            return root;
         }
 
         public static Transform BuildVirtualUsv(string name, Color idColor)
@@ -512,6 +527,13 @@ namespace UavUsv
         public static Transform BuildVirtualTarget(string name)
         {
             Transform target = BuildEnemyShip();
+            target.name = name;
+            return target;
+        }
+
+        public static Transform BuildVirtualProtectedTarget(string name)
+        {
+            Transform target = BuildFriendlyShip();
             target.name = name;
             return target;
         }
