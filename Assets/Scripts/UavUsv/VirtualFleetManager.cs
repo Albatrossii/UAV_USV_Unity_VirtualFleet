@@ -24,6 +24,12 @@ namespace UavUsv
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Vector3> renderVelocities =
             new Dictionary<string, Vector3>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<VirtualFleetDeviceState> renderedDevices =
+            new List<VirtualFleetDeviceState>(MaximumUavCount + MaximumUsvCount + MaximumTargetCount);
+        private readonly Dictionary<Vector2Int, List<int>> renderSafetyBuckets =
+            new Dictionary<Vector2Int, List<int>>();
+        private readonly List<Vector2Int> activeRenderSafetyBuckets =
+            new List<Vector2Int>();
         private int nextUavNumber = 1;
         private int nextUsvNumber = 1;
         private int currentRandomSeed = DefaultRandomSeed;
@@ -119,6 +125,7 @@ namespace UavUsv
             Interpolate(uavs);
             Interpolate(usvs);
             Interpolate(targets);
+            ResolveRenderedSeparation();
         }
 
         private void Interpolate(List<VirtualFleetDeviceState> devices)
@@ -153,6 +160,142 @@ namespace UavUsv
                     turnRate * Time.deltaTime
                 );
             }
+        }
+
+        private void ResolveRenderedSeparation()
+        {
+            renderedDevices.Clear();
+            renderedDevices.AddRange(uavs);
+            renderedDevices.AddRange(usvs);
+            renderedDevices.AddRange(targets);
+            if (renderedDevices.Count < 2)
+                return;
+
+            // Algorithm samples are safe at 10 Hz, but independent SmoothDamp
+            // curves can bow into each other between two samples. Resolve the
+            // actual rendered transforms using model-sized horizontal
+            // envelopes. A spatial hash keeps this near-linear for 128+128.
+            const float cellSize = 3.2f;
+            for (int iteration = 0; iteration < 4; iteration++)
+            {
+                for (int i = 0; i < activeRenderSafetyBuckets.Count; i++)
+                    renderSafetyBuckets[activeRenderSafetyBuckets[i]].Clear();
+                activeRenderSafetyBuckets.Clear();
+
+                for (int index = 0; index < renderedDevices.Count; index++)
+                {
+                    VirtualFleetDeviceState state = renderedDevices[index];
+                    if (state == null || !state.transform)
+                        continue;
+                    Vector3 position = state.transform.position;
+                    Vector2Int cell = new Vector2Int(
+                        Mathf.FloorToInt(position.x / cellSize),
+                        Mathf.FloorToInt(position.z / cellSize)
+                    );
+                    if (!renderSafetyBuckets.TryGetValue(cell, out List<int> members))
+                    {
+                        members = new List<int>(8);
+                        renderSafetyBuckets[cell] = members;
+                    }
+                    if (members.Count == 0)
+                        activeRenderSafetyBuckets.Add(cell);
+                    members.Add(index);
+                }
+
+                bool corrected = false;
+                for (int leftIndex = 0; leftIndex < renderedDevices.Count; leftIndex++)
+                {
+                    VirtualFleetDeviceState left = renderedDevices[leftIndex];
+                    if (left == null || !left.transform)
+                        continue;
+                    Vector3 leftPosition = left.transform.position;
+                    Vector2Int leftCell = new Vector2Int(
+                        Mathf.FloorToInt(leftPosition.x / cellSize),
+                        Mathf.FloorToInt(leftPosition.z / cellSize)
+                    );
+                    for (int cellX = -1; cellX <= 1; cellX++)
+                    for (int cellY = -1; cellY <= 1; cellY++)
+                    {
+                        Vector2Int cell = leftCell + new Vector2Int(cellX, cellY);
+                        if (!renderSafetyBuckets.TryGetValue(cell, out List<int> members))
+                            continue;
+                        for (int member = 0; member < members.Count; member++)
+                        {
+                            int rightIndex = members[member];
+                            if (rightIndex <= leftIndex)
+                                continue;
+                            if (SeparateRenderedPair(left, renderedDevices[rightIndex], leftIndex, rightIndex))
+                                corrected = true;
+                        }
+                    }
+                }
+                if (!corrected)
+                    break;
+            }
+        }
+
+        private bool SeparateRenderedPair(
+            VirtualFleetDeviceState first,
+            VirtualFleetDeviceState second,
+            int firstIndex,
+            int secondIndex)
+        {
+            if (second == null || !second.transform)
+                return false;
+            bool firstTarget = IsTarget(first);
+            bool secondTarget = IsTarget(second);
+            if (firstTarget && secondTarget)
+                return false;
+
+            Vector3 firstPosition = first.transform.position;
+            Vector3 secondPosition = second.transform.position;
+            Vector2 delta = new Vector2(
+                firstPosition.x - secondPosition.x,
+                firstPosition.z - secondPosition.z
+            );
+            float required = RenderRadius(first) + RenderRadius(second) + .25f;
+            float distance = delta.magnitude;
+            if (distance >= required)
+                return false;
+            if (distance < .0001f)
+            {
+                float angle = ((firstIndex * 37 + secondIndex * 53) % 360) * Mathf.Deg2Rad;
+                delta = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
+                distance = 1f;
+            }
+            Vector2 direction = delta / distance;
+            float overlap = required - distance;
+            float firstShare = firstTarget ? 0f : secondTarget ? 1f : .5f;
+            float secondShare = secondTarget ? 0f : firstTarget ? 1f : .5f;
+            if (firstShare > 0f)
+            {
+                firstPosition.x += direction.x * overlap * firstShare;
+                firstPosition.z += direction.y * overlap * firstShare;
+                first.transform.position = firstPosition;
+                renderVelocities[first.deviceCode] = Vector3.zero;
+            }
+            if (secondShare > 0f)
+            {
+                secondPosition.x -= direction.x * overlap * secondShare;
+                secondPosition.z -= direction.y * overlap * secondShare;
+                second.transform.position = secondPosition;
+                renderVelocities[second.deviceCode] = Vector3.zero;
+            }
+            return true;
+        }
+
+        private static bool IsTarget(VirtualFleetDeviceState state)
+        {
+            return string.Equals(state.deviceType, "TARGET", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static float RenderRadius(VirtualFleetDeviceState state)
+        {
+            if (IsTarget(state))
+                return 1.55f;
+            return string.Equals(state.deviceType, "USV", StringComparison.OrdinalIgnoreCase)
+                ? .96f
+                : .58f;
         }
 
         public bool TryApplyTargetPose(
