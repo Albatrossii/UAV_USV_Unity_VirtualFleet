@@ -52,6 +52,8 @@ namespace UavUsv
         public float initialSpeedMps;
         public float initialHeadingDeg;
         public int seed;
+        public string initialPosesCoordinateFrame = "GLOBAL_ENU";
+        public VirtualPose[] initialPoses;
     }
 
     [Serializable]

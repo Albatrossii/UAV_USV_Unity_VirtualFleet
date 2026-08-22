@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UavUsv.PlatformTools;
 
 namespace UavUsv
 {
@@ -55,6 +56,7 @@ namespace UavUsv
                 CurrentConfig.usvCount,
                 CurrentConfig.seed
             );
+            ApplyInitialScenarioPoses();
             LastAppliedSequence = -1;
         }
 
@@ -221,8 +223,73 @@ namespace UavUsv
                 formationType = config.formationType,
                 initialSpeedMps = config.initialSpeedMps,
                 initialHeadingDeg = NormalizeHeading(config.initialHeadingDeg),
-                seed = config.seed
+                seed = config.seed,
+                initialPosesCoordinateFrame = config.initialPosesCoordinateFrame,
+                initialPoses = config.initialPoses
             };
+        }
+
+        private void ApplyInitialScenarioPoses()
+        {
+            if (CurrentConfig == null
+                || CurrentConfig.initialPoses == null
+                || CurrentConfig.initialPoses.Length == 0)
+                return;
+
+            if (!string.Equals(
+                    CurrentConfig.initialPosesCoordinateFrame,
+                    VirtualFleetProtocol.GlobalCoordinateFrame,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.LogWarning(
+                    "[VirtualFleet] Ignoring initialPoses because coordinateFrame=" +
+                    CurrentConfig.initialPosesCoordinateFrame +
+                    " is not GLOBAL_ENU"
+                );
+                return;
+            }
+
+            int applied = 0;
+            for (int i = 0; i < CurrentConfig.initialPoses.Length; i++)
+            {
+                VirtualPose pose = CurrentConfig.initialPoses[i];
+                if (pose == null
+                    || !pose.valid
+                    || string.IsNullOrWhiteSpace(pose.deviceCode))
+                    continue;
+
+                Vector3 position = Coordinates.ToPresentation(
+                    pose.eastM,
+                    pose.northM,
+                    pose.upM
+                );
+                Quaternion rotation = Quaternion.Euler(
+                    0f,
+                    -NormalizeHeading(pose.headingDeg),
+                    0f
+                );
+                bool updated = pose.deviceType != null &&
+                    pose.deviceType.Equals("TARGET", StringComparison.OrdinalIgnoreCase)
+                    ? fleetManager.TryApplyTargetPose(
+                        pose.deviceCode,
+                        position,
+                        rotation,
+                        pose.state
+                    )
+                    : fleetManager.TryApplyPose(
+                        pose.deviceCode,
+                        position,
+                        rotation,
+                        pose.state
+                    );
+                if (updated)
+                    applied++;
+            }
+
+            Debug.Log(
+                "[VirtualFleet] Applied initial scenario poses: " +
+                applied + "/" + CurrentConfig.initialPoses.Length
+            );
         }
 
         private VirtualFleetDeviceState FindState(string deviceCode)
