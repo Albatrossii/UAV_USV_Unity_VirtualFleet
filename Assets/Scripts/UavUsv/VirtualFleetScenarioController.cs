@@ -13,6 +13,7 @@ namespace UavUsv
         IVirtualFleetRuntime
     {
         [SerializeField] private VirtualFleetManager fleetManager;
+        private VirtualFleetSceneSafety initializationSafety;
 
         public VirtualFleetManager FleetManager => fleetManager;
         public bool CanModifyFleet => fleetManager && fleetManager.CanModifyFleet;
@@ -54,9 +55,11 @@ namespace UavUsv
             fleetManager.Initialize(
                 CurrentConfig.uavCount,
                 CurrentConfig.usvCount,
-                CurrentConfig.seed
+                CurrentConfig.seed,
+                TargetCodes(CurrentConfig.initialPoses, CurrentConfig.targetCount)
             );
             ApplyInitialScenarioPoses();
+            ValidateInitialScenarioPoses();
             LastAppliedSequence = -1;
         }
 
@@ -192,6 +195,25 @@ namespace UavUsv
                 throw new InvalidOperationException("VirtualFleetManager 未绑定");
         }
 
+        private void ValidateInitialScenarioPoses()
+        {
+            if (!initializationSafety)
+                initializationSafety = GetComponent<VirtualFleetSceneSafety>();
+            if (!initializationSafety)
+                initializationSafety = gameObject.AddComponent<VirtualFleetSceneSafety>();
+
+            initializationSafety.Bind(fleetManager);
+            // Validation is intentionally one-shot. Continuous transform
+            // rollback fights the streamed algorithm poses and causes the
+            // visible jumping reported in WebGL.
+            initializationSafety.enabled = false;
+            int corrected = initializationSafety.ValidateCurrentFleet();
+            if (corrected > 0)
+                Debug.LogWarning(
+                    "[VirtualFleet] Corrected unsafe initial poses: " + corrected
+                );
+        }
+
         private static void ValidateConfig(VirtualFleetConfig config)
         {
             if (!string.Equals(config.runtimeMode, "VIRTUAL_SIMULATION", StringComparison.OrdinalIgnoreCase))
@@ -204,7 +226,8 @@ namespace UavUsv
             if (config.uavCount < 1 || config.uavCount > VirtualFleetManager.MaximumUavCount ||
                 config.usvCount < 1 || config.usvCount > VirtualFleetManager.MaximumUsvCount)
                 throw new ArgumentException("invalid_count");
-            if (config.targetCount != 1)
+            if (config.targetCount < 1 ||
+                config.targetCount > VirtualFleetManager.MaximumTargetCount)
                 throw new ArgumentException("invalid_target_count");
             if (config.initialSpeedMps < 0f)
                 throw new ArgumentException("invalid_speed");
@@ -227,6 +250,32 @@ namespace UavUsv
                 initialPosesCoordinateFrame = config.initialPosesCoordinateFrame,
                 initialPoses = config.initialPoses
             };
+        }
+
+        private static string[] TargetCodes(VirtualPose[] poses, int targetCount)
+        {
+            var codes = new System.Collections.Generic.List<string>();
+            var seen = new System.Collections.Generic.HashSet<string>(
+                StringComparer.OrdinalIgnoreCase
+            );
+            if (poses != null)
+                for (int i = 0; i < poses.Length; i++)
+                {
+                    VirtualPose pose = poses[i];
+                    if (pose == null || string.IsNullOrWhiteSpace(pose.deviceCode))
+                        continue;
+                    string type = (pose.deviceType ?? string.Empty).Trim().ToUpperInvariant();
+                    if (!type.Contains("TARGET"))
+                        continue;
+                    string code = pose.deviceCode.Trim().ToUpperInvariant().Replace('_', '-');
+                    if (seen.Add(code))
+                        codes.Add(code);
+                }
+            for (int i = codes.Count; i < targetCount; i++)
+                codes.Add("TARGET-" + (i + 1).ToString("000"));
+            if (codes.Count > targetCount)
+                codes.RemoveRange(targetCount, codes.Count - targetCount);
+            return codes.ToArray();
         }
 
         private void ApplyInitialScenarioPoses()
@@ -268,20 +317,12 @@ namespace UavUsv
                     -NormalizeHeading(pose.headingDeg),
                     0f
                 );
-                bool updated = pose.deviceType != null &&
-                    pose.deviceType.Equals("TARGET", StringComparison.OrdinalIgnoreCase)
-                    ? fleetManager.TryApplyTargetPose(
-                        pose.deviceCode,
-                        position,
-                        rotation,
-                        pose.state
-                    )
-                    : fleetManager.TryApplyPose(
-                        pose.deviceCode,
-                        position,
-                        rotation,
-                        pose.state
-                    );
+                bool updated = fleetManager.TryApplyPoseImmediate(
+                    pose.deviceCode,
+                    position,
+                    rotation,
+                    pose.state
+                );
                 if (updated)
                     applied++;
             }

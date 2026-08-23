@@ -26,7 +26,10 @@ namespace UavUsv
         private readonly List<Vector3> targetSpawnPositions = new List<Vector3>();
         private System.Random random;
         private Vector3 waterSpawnCenter;
-        private Transform targetTransform;
+        private Transform protectedTargetTransform;
+        private Transform threatTargetTransform;
+        private bool protectedTargetClaimed;
+        private bool threatTargetClaimed;
 
         public VirtualVehicleFactory(
             Transform[] uavPads,
@@ -45,11 +48,21 @@ namespace UavUsv
             uavSpawnPositions.Clear();
             usvSpawnPositions.Clear();
             targetSpawnPositions.Clear();
+            protectedTargetClaimed = false;
+            threatTargetClaimed = false;
         }
 
         public void SetTargetTransform(Transform value)
         {
-            targetTransform = value;
+            SetTargetTransforms(null, value);
+        }
+
+        public void SetTargetTransforms(Transform protectedTarget, Transform threatTarget)
+        {
+            protectedTargetTransform = protectedTarget;
+            threatTargetTransform = threatTarget;
+            protectedTargetClaimed = false;
+            threatTargetClaimed = false;
         }
 
         public Transform Create(VirtualFleetDeviceType type, string deviceCode, int index)
@@ -68,9 +81,7 @@ namespace UavUsv
 
             if (type == VirtualFleetDeviceType.Target)
             {
-                Transform target = targetTransform;
-                if (!target)
-                    target = SimulationBootstrap.BuildVirtualTarget(deviceCode);
+                Transform target = ResolveMissionTarget(deviceCode);
                 target.name = deviceCode;
                 Vector3 targetPosition = CreateRandomPosition(false, targetSpawnPositions);
                 target.SetPositionAndRotation(
@@ -92,6 +103,29 @@ namespace UavUsv
             );
             usvSpawnPositions.Add(usvPosition);
             return usv;
+        }
+
+        private Transform ResolveMissionTarget(string deviceCode)
+        {
+            string normalized = (deviceCode ?? string.Empty).Trim().ToUpperInvariant();
+            bool isProtected = normalized.StartsWith("PROTECTED-", StringComparison.Ordinal);
+
+            if (isProtected)
+            {
+                if (!protectedTargetClaimed && protectedTargetTransform)
+                {
+                    protectedTargetClaimed = true;
+                    return protectedTargetTransform;
+                }
+                return SimulationBootstrap.BuildVirtualProtectedTarget(deviceCode);
+            }
+
+            if (!threatTargetClaimed && threatTargetTransform)
+            {
+                threatTargetClaimed = true;
+                return threatTargetTransform;
+            }
+            return SimulationBootstrap.BuildVirtualTarget(deviceCode);
         }
 
         private Vector3 CreateRandomPosition(

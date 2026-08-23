@@ -31,7 +31,11 @@ namespace UavUsv.PlatformTools
     public static class VirtualFleetMessageValidator
     {
         private static readonly HashSet<string> SupportedDeviceTypes =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "UAV", "USV" };
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "UAV", "USV", "TARGET", "CAPTURE_TARGET",
+                "ESCORT_TARGET", "THREAT_TARGET"
+            };
 
         public static VirtualFleetValidationResult ValidateEnvelope(VirtualFleetMessage message)
         {
@@ -82,9 +86,9 @@ namespace UavUsv.PlatformTools
                 return Invalid("invalid_payload", "runId must be positive");
             if (config.uavCount < 1 || config.uavCount > VirtualFleetProtocol.MaxUavCount ||
                 config.usvCount < 1 || config.usvCount > VirtualFleetProtocol.MaxUsvCount)
-                return Invalid("invalid_count", "UAV and USV counts must be in range 1..100");
-            if (config.targetCount != VirtualFleetProtocol.FixedTargetCount)
-                return Invalid("invalid_count", "v1 requires targetCount to be 1");
+                return Invalid("invalid_count", "UAV and USV counts must be in range 1..128");
+            if (config.targetCount < 1 || config.targetCount > VirtualFleetProtocol.MaxTargetCount)
+                return Invalid("invalid_count", "targetCount must be in range 1..12");
             if (config.initialSpeedMps < 0f)
                 return Invalid("invalid_payload", "initialSpeedMps cannot be negative");
 
@@ -114,9 +118,9 @@ namespace UavUsv.PlatformTools
                 return Invalid("invalid_algorithm", "Unsupported algorithmCode");
             if (message.payload.uavCount < 1 || message.payload.uavCount > VirtualFleetProtocol.MaxUavCount ||
                 message.payload.usvCount < 1 || message.payload.usvCount > VirtualFleetProtocol.MaxUsvCount)
-                return Invalid("invalid_count", "UAV and USV counts must be in range 1..100");
-            if (message.payload.targetCount != VirtualFleetProtocol.FixedTargetCount)
-                return Invalid("invalid_count", "targetCount must be 1");
+                return Invalid("invalid_count", "UAV and USV counts must be in range 1..128");
+            if (message.payload.targetCount < 1 || message.payload.targetCount > VirtualFleetProtocol.MaxTargetCount)
+                return Invalid("invalid_count", "targetCount must be in range 1..12");
             if (message.payload.initialSpeedMps < 0f)
                 return Invalid("invalid_payload", "initialSpeedMps cannot be negative");
             message.payload.algorithmCode = message.payload.algorithmCode.Trim().ToUpperInvariant();
@@ -199,13 +203,16 @@ namespace UavUsv.PlatformTools
             string[] parts = normalized.Split('-');
             if (parts.Length != 2)
                 return string.Empty;
-            if (parts[0] != "UAV" && parts[0] != "USV" && parts[0] != "TARGET")
+            if (parts[0] != "UAV" && parts[0] != "USV" &&
+                parts[0] != "TARGET" && parts[0] != "PROTECTED" &&
+                parts[0] != "THREAT")
                 return string.Empty;
             if (!int.TryParse(parts[1], out int number) || number < 1)
                 return string.Empty;
-            if (parts[0] == "TARGET" && number != 1)
+            if ((parts[0] == "UAV" || parts[0] == "USV") && number > 128)
                 return string.Empty;
-            if ((parts[0] == "UAV" || parts[0] == "USV") && number > 100)
+            if ((parts[0] == "TARGET" || parts[0] == "PROTECTED" || parts[0] == "THREAT") &&
+                number > VirtualFleetProtocol.MaxTargetCount)
                 return string.Empty;
             return parts[0] + "-" + number.ToString("D3");
         }
@@ -318,7 +325,9 @@ namespace UavUsv.PlatformTools
                     return Invalid("invalid_device_code", "Invalid deviceCode");
                 if (!SupportedDeviceTypes.Contains(pose.deviceType))
                     return Invalid("invalid_payload", "Invalid deviceType");
-                if (!normalizedCode.StartsWith(pose.deviceType.Trim().ToUpperInvariant() + "-", StringComparison.Ordinal))
+                bool targetPose = pose.deviceType.Trim().ToUpperInvariant().Contains("TARGET");
+                if (!targetPose &&
+                    !normalizedCode.StartsWith(pose.deviceType.Trim().ToUpperInvariant() + "-", StringComparison.Ordinal))
                     return Invalid("invalid_device_code", "deviceCode and deviceType do not match");
                 pose.deviceCode = normalizedCode;
                 pose.deviceType = pose.deviceType.Trim().ToUpperInvariant();

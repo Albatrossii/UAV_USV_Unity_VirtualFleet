@@ -41,6 +41,18 @@ namespace UavUsv.PlatformTools
         private int lastTrailDeviceCount = -1;
         private bool trailRecordingEnabled;
 
+        // Algorithm simulation intentionally ships without world-space
+        // trajectories. Keeping this as a compile-time gate prevents mission
+        // state or camera-mode changes from silently enabling them again.
+        private const bool TrajectoryRenderingEnabled = false;
+
+        private ObservationMode interactionMode = ObservationMode.None;
+        private Vector3 interactionFocusOffset;
+        private float interactionYaw;
+        private float interactionPitch;
+        private float interactionDistance;
+        private float lastPrimaryClickAt = -10f;
+
         private const int MaxTrailPoints = 180;
         private const float TrailSampleSeconds = .2f;
         private const float TrailMinDistance = 1.25f;
@@ -142,6 +154,7 @@ namespace UavUsv.PlatformTools
             selectedSubject = null;
             CurrentDeviceCode = string.Empty;
             mode = ObservationMode.Overview;
+            ResetCameraInteraction();
             ActivateObserver();
             RefreshTrailVisibility();
         }
@@ -152,12 +165,14 @@ namespace UavUsv.PlatformTools
             selectedSubject = null;
             CurrentDeviceCode = string.Empty;
             mode = ObservationMode.Lighthouse;
+            ResetCameraInteraction();
             ActivateObserver();
         }
 
         public void ReleaseToOriginalCamera()
         {
             mode = ObservationMode.None;
+            ResetCameraInteraction();
             selectedSubject = null;
             CurrentDeviceCode = string.Empty;
             if (chaseCamera)
@@ -167,10 +182,8 @@ namespace UavUsv.PlatformTools
 
         public void SetMissionState(string state)
         {
-            string normalized = (state ?? string.Empty).Trim().ToUpperInvariant();
-            if (normalized == "RUNNING" && !trailRecordingEnabled)
-                ResetFleetTrails();
-            trailRecordingEnabled = normalized == "RUNNING";
+            trailRecordingEnabled = false;
+            DestroyFleetTrails();
             RefreshTrailVisibility();
         }
 
@@ -202,6 +215,7 @@ namespace UavUsv.PlatformTools
             }
 
             mode = ObservationMode.Device;
+            ResetCameraInteraction();
             ActivateObserver();
             error = string.Empty;
             return true;
@@ -234,6 +248,8 @@ namespace UavUsv.PlatformTools
             else
                 CalculateOverview(out desiredPosition, out focusPoint);
 
+            ApplyMouseCameraControl(ref desiredPosition, ref focusPoint);
+
             if (mode == ObservationMode.Device && selectedSubject)
                 desiredPosition = ResolveDeviceOcclusion(focusPoint, desiredPosition);
             desiredPosition.y = Mathf.Max(desiredPosition.y, 2.4f);
@@ -251,6 +267,168 @@ namespace UavUsv.PlatformTools
                 desiredFieldOfView,
                 fovT
             );
+        }
+
+        private void ApplyMouseCameraControl(
+            ref Vector3 desiredPosition,
+            ref Vector3 focusPoint)
+        {
+            if (mode != ObservationMode.Overview && mode != ObservationMode.Device)
+                return;
+
+            bool pointerInside = Input.mousePosition.x >= 0f &&
+                                 Input.mousePosition.y >= 0f &&
+                                 Input.mousePosition.x <= Screen.width &&
+                                 Input.mousePosition.y <= Screen.height;
+            if (!pointerInside)
+                return;
+
+            bool reset = false;
+            if (Input.GetMouseButtonDown(0))
+            {
+                float now = Time.unscaledTime;
+                reset = now - lastPrimaryClickAt <= .32f;
+                lastPrimaryClickAt = now;
+            }
+            if (reset)
+            {
+                ResetCameraInteraction();
+                return;
+            }
+
+            float scroll = Input.mouseScrollDelta.y;
+            bool interactionRequested = Input.GetMouseButton(1) ||
+                                        Input.GetMouseButton(2) ||
+                                        (Input.GetMouseButton(0) &&
+                                         !Input.GetMouseButtonDown(0)) ||
+                                        Mathf.Abs(scroll) > .001f;
+            if (interactionMode != mode)
+            {
+                if (!interactionRequested)
+                    return;
+                InitializeCameraInteraction(desiredPosition, focusPoint);
+            }
+
+            if (Input.GetMouseButton(1))
+            {
+                interactionYaw += Input.GetAxis("Mouse X") * 2.2f;
+                interactionPitch = Mathf.Clamp(
+                    interactionPitch - Input.GetAxis("Mouse Y") * 1.8f,
+                    18f,
+                    82f
+                );
+            }
+
+            if (Input.GetMouseButton(2) ||
+                (Input.GetMouseButton(0) && !Input.GetMouseButtonDown(0)))
+            {
+                Quaternion orbit = Quaternion.Euler(
+                    interactionPitch,
+                    interactionYaw,
+                    0f
+                );
+                Vector3 right = orbit * Vector3.right;
+                Vector3 forward = orbit * Vector3.forward;
+                right.y = 0f;
+                forward.y = 0f;
+                if (right.sqrMagnitude > .001f) right.Normalize();
+                if (forward.sqrMagnitude > .001f) forward.Normalize();
+                float scale = Mathf.Max(.012f, interactionDistance * .0018f);
+                interactionFocusOffset -= right * Input.GetAxis("Mouse X") * scale;
+                interactionFocusOffset -= forward * Input.GetAxis("Mouse Y") * scale;
+            }
+
+            if (Mathf.Abs(scroll) > .001f)
+            {
+                Vector3 currentFocus = focusPoint + interactionFocusOffset;
+                Quaternion orbit = Quaternion.Euler(
+                    interactionPitch,
+                    interactionYaw,
+                    0f
+                );
+                Vector3 currentPosition = currentFocus -
+                                          orbit * Vector3.forward * interactionDistance;
+                bool hasBefore = TryPointerPlanePoint(
+                    currentPosition,
+                    orbit,
+                    currentFocus.y,
+                    out Vector3 before
+                );
+
+                interactionDistance = Mathf.Clamp(
+                    interactionDistance * Mathf.Exp(-scroll * .13f),
+                    mode == ObservationMode.Device ? 3.5f : 8f,
+                    mode == ObservationMode.Device ? 90f : 360f
+                );
+                Vector3 nextPosition = currentFocus -
+                                       orbit * Vector3.forward * interactionDistance;
+                if (hasBefore && TryPointerPlanePoint(
+                        nextPosition,
+                        orbit,
+                        currentFocus.y,
+                        out Vector3 after))
+                {
+                    Vector3 correction = before - after;
+                    correction.y = 0f;
+                    interactionFocusOffset += correction;
+                }
+            }
+
+            focusPoint += interactionFocusOffset;
+            Quaternion controlledRotation = Quaternion.Euler(
+                interactionPitch,
+                interactionYaw,
+                0f
+            );
+            desiredPosition = focusPoint -
+                              controlledRotation * Vector3.forward * interactionDistance;
+        }
+
+        private void InitializeCameraInteraction(Vector3 position, Vector3 focus)
+        {
+            Vector3 offset = position - focus;
+            interactionDistance = Mathf.Max(1f, offset.magnitude);
+            Quaternion look = Quaternion.LookRotation(focus - position, Vector3.up);
+            interactionYaw = look.eulerAngles.y;
+            interactionPitch = NormalizeSignedAngle(look.eulerAngles.x);
+            interactionPitch = Mathf.Clamp(interactionPitch, 18f, 82f);
+            interactionFocusOffset = Vector3.zero;
+            interactionMode = mode;
+        }
+
+        private bool TryPointerPlanePoint(
+            Vector3 cameraPosition,
+            Quaternion cameraRotation,
+            float planeY,
+            out Vector3 point)
+        {
+            point = Vector3.zero;
+            if (!observedCamera)
+                return false;
+
+            Vector3 savedPosition = transform.position;
+            Quaternion savedRotation = transform.rotation;
+            transform.SetPositionAndRotation(cameraPosition, cameraRotation);
+            Ray ray = observedCamera.ScreenPointToRay(Input.mousePosition);
+            transform.SetPositionAndRotation(savedPosition, savedRotation);
+            Plane plane = new Plane(Vector3.up, new Vector3(0f, planeY, 0f));
+            if (!plane.Raycast(ray, out float enter) || enter < 0f)
+                return false;
+            point = ray.GetPoint(enter);
+            return true;
+        }
+
+        private void ResetCameraInteraction()
+        {
+            interactionMode = ObservationMode.None;
+            interactionFocusOffset = Vector3.zero;
+            interactionDistance = 0f;
+        }
+
+        private static float NormalizeSignedAngle(float angle)
+        {
+            angle %= 360f;
+            return angle > 180f ? angle - 360f : angle;
         }
 
         private void CalculateDeviceView(out Vector3 position, out Vector3 focus)
@@ -509,7 +687,10 @@ namespace UavUsv.PlatformTools
 
             AddFleetTargets(fleetManager.GetUavTransforms());
             AddFleetTargets(fleetManager.GetUsvTransforms());
-            SyncFleetTrails();
+            if (TrajectoryRenderingEnabled)
+                SyncFleetTrails();
+            else
+                DestroyFleetTrails();
         }
 
         private void AddFleetTargets(Transform[] targets)
@@ -526,6 +707,11 @@ namespace UavUsv.PlatformTools
 
         private void SyncFleetTrails()
         {
+            if (!TrajectoryRenderingEnabled)
+            {
+                DestroyFleetTrails();
+                return;
+            }
             if (!trailRoot)
             {
                 GameObject root = new GameObject("VirtualFleetTrails");
@@ -618,6 +804,8 @@ namespace UavUsv.PlatformTools
 
         private void UpdateFleetTrails()
         {
+            if (!TrajectoryRenderingEnabled)
+                return;
             if (Time.unscaledTime < nextTrailSampleAt)
                 return;
             nextTrailSampleAt = Time.unscaledTime + TrailSampleSeconds;
@@ -703,11 +891,25 @@ namespace UavUsv.PlatformTools
                     continue;
                 List<Vector3> points;
                 fleetTrailPoints.TryGetValue(pair.Key, out points);
-                pair.Value.enabled =
+                pair.Value.enabled = TrajectoryRenderingEnabled &&
                     mode == ObservationMode.Overview &&
                     points != null &&
                     points.Count > 1;
             }
+        }
+
+        private void DestroyFleetTrails()
+        {
+            foreach (KeyValuePair<Transform, LineRenderer> pair in fleetTrails)
+                if (pair.Value)
+                    Destroy(pair.Value.gameObject);
+            fleetTrails.Clear();
+            fleetTrailPoints.Clear();
+            initializedTrailTargets.Clear();
+            lastTrailDeviceCount = 0;
+            if (trailRoot)
+                Destroy(trailRoot.gameObject);
+            trailRoot = null;
         }
 
         private static Vector3 DeviceForward(Transform subject)

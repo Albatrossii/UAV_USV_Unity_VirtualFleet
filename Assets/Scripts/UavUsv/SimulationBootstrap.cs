@@ -82,7 +82,7 @@ namespace UavUsv
 
             virtualFleet = gameObject.AddComponent<VirtualFleetManager>();
             virtualFleet.ConfigureSpawnPoints(uavPads, usvPos, usvYaw);
-            virtualFleet.ConfigureTargetTransform(enemy);
+            virtualFleet.ConfigureTargetTransforms(friendly, enemy);
             virtualFleet.Initialize(
                 VirtualFleetManager.DefaultUavCount,
                 VirtualFleetManager.DefaultUsvCount
@@ -154,6 +154,19 @@ namespace UavUsv
 
             Transform[] usvs = virtualFleet.GetUsvTransforms();
             Transform[] uavs = virtualFleet.GetUavTransforms();
+            Transform[] missionTargets = virtualFleet.GetTargetTransforms();
+
+            bool usesProtectedTarget = false;
+            bool usesThreatTarget = false;
+            for (int i = 0; i < missionTargets.Length; i++)
+            {
+                usesProtectedTarget |= missionTargets[i] == virtualFleetFriendlyTarget;
+                usesThreatTarget |= missionTargets[i] == virtualFleetEnemyTarget;
+            }
+            if (virtualFleetFriendlyTarget)
+                virtualFleetFriendlyTarget.gameObject.SetActive(usesProtectedTarget);
+            if (virtualFleetEnemyTarget)
+                virtualFleetEnemyTarget.gameObject.SetActive(usesThreatTarget);
 
             if (virtualFleetChaseCamera)
             {
@@ -163,15 +176,26 @@ namespace UavUsv
                     virtualFleetChaseCamera.companion = uavs[0];
 
                 var subjects = new List<Transform>(
-                    usvs.Length + uavs.Length + 2
+                    usvs.Length + uavs.Length + missionTargets.Length
                 );
                 subjects.AddRange(usvs);
                 subjects.AddRange(uavs);
-                if (virtualFleetFriendlyTarget)
-                    subjects.Add(virtualFleetFriendlyTarget);
-                if (virtualFleetEnemyTarget)
-                    subjects.Add(virtualFleetEnemyTarget);
+                subjects.AddRange(missionTargets);
                 virtualFleetChaseCamera.SetGroupTargets(subjects.ToArray());
+
+                for (int i = 0; i < missionTargets.Length; i++)
+                {
+                    Transform candidate = missionTargets[i];
+                    if (!candidate)
+                        continue;
+                    string targetName = candidate.name.ToUpperInvariant();
+                    if (targetName.StartsWith("TARGET-") ||
+                        targetName.StartsWith("THREAT-"))
+                    {
+                        virtualFleetChaseCamera.lookAt = candidate;
+                        break;
+                    }
+                }
             }
 
             if (virtualFleetSensorPip)
@@ -516,6 +540,13 @@ namespace UavUsv
             return target;
         }
 
+        public static Transform BuildVirtualProtectedTarget(string name)
+        {
+            Transform target = BuildFriendlyShip();
+            target.name = name;
+            return target;
+        }
+
         private static Transform BuildEnemyShip()
         {
             Transform root = new GameObject("enemy_ship").transform;
@@ -758,6 +789,7 @@ namespace UavUsv
             // Keep device codes available for selection and bridge messages,
             // but hide the dense world-space labels in large-fleet views.
             chase.showAgentLabels = false;
+            chase.showTargetLabels = true;
             chase.target = usvs[0];
             chase.companion = uavs[0];
             chase.lookAt = enemy;
@@ -817,6 +849,7 @@ namespace UavUsv
             pip.uavCameraHeight = UavCameraHeight;
             pip.activeView = SensorViewPip.SensorView.Usv01Forward;
             virtualFleetSensorPip = pip;
+            RefreshVirtualFleetCameraTargets();
         }
 
         private void OnGUI()

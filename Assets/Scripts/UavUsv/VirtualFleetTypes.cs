@@ -36,6 +36,9 @@ namespace UavUsv
         public Vector3 position;
         public Quaternion rotation;
         [NonSerialized] internal Transform transform;
+        [NonSerialized] internal Vector3 desiredPosition;
+        [NonSerialized] internal Quaternion desiredRotation;
+        [NonSerialized] internal bool hasDesiredPose;
     }
 
     [Serializable]

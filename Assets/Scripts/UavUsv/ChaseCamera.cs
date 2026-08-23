@@ -62,7 +62,10 @@ namespace UavUsv
         public float overviewDistanceDeadZone = 2.5f;
 
         [Header("Trajectory statistics inset")]
-        public bool showTacticalInset = true;
+        // Algorithm simulation does not expose trajectory/inset rendering.
+        // Keep the legacy implementation available for the system-overview
+        // project, but default it off in this independent WebGL build.
+        public bool showTacticalInset = false;
         public Rect tacticalViewport = new Rect(.62f, .6f, .37f, .39f);
         public float trajectoryWorldPadding = 8f;
         public float trajectorySampleSeconds = .2f;
@@ -71,12 +74,19 @@ namespace UavUsv
         public int trajectoryMaxSamplesPerAgent = 900;
         public int trajectoryDrawSegmentsPerAgent = 140;
         public bool showAgentLabels = true;
+        public bool showTargetLabels = true;
 
         private ViewMode mode = ViewMode.Action;
         private bool initialized;
         private float orbitYaw = -35f;
         private float orbitPitch = 22f;
         private float orbitDistance = 42f;
+        private bool manualCameraActive;
+        private Vector3 manualFocus;
+        private float manualYaw = -35f;
+        private float manualPitch = 32f;
+        private float manualDistance = 42f;
+        private float lastPrimaryClickTime = -10f;
         private float actionDistance;
         private float overviewDistance;
         private float takeoffShotUntil = -1f;
@@ -166,6 +176,11 @@ namespace UavUsv
             else if (Input.GetKeyDown(KeyCode.Tab))
                 SetMode((ViewMode)(((int)mode + 1) % 5));
 
+            UpdateManualCameraInput();
+
+            if (manualCameraActive)
+                return;
+
             if (mode == ViewMode.FreeOrbit)
             {
                 if (Input.GetMouseButton(1))
@@ -189,6 +204,12 @@ namespace UavUsv
         private void LateUpdate()
         {
             UpdateTrajectoryData();
+
+            if (manualCameraActive)
+            {
+                UpdateManualCameraView();
+                return;
+            }
 
             if (mode == ViewMode.Action)
             {
@@ -842,12 +863,143 @@ namespace UavUsv
             transform.rotation = Quaternion.Slerp(transform.rotation, desiredRotation, rotationT);
         }
 
+        private void UpdateManualCameraInput()
+        {
+            if (!attachedCamera || !attachedCamera.enabled)
+                return;
+
+            Vector3 mouse = Input.mousePosition;
+            bool pointerInside = mouse.x >= 0f && mouse.y >= 0f &&
+                                 mouse.x <= Screen.width && mouse.y <= Screen.height;
+            if (!pointerInside)
+                return;
+
+            if (Input.GetMouseButtonDown(0))
+            {
+                if (Time.unscaledTime - lastPrimaryClickTime <= .32f)
+                {
+                    manualCameraActive = false;
+                    initialized = false;
+                    actionDistance = 0f;
+                    overviewDistance = 0f;
+                    lastPrimaryClickTime = -10f;
+                    return;
+                }
+                lastPrimaryClickTime = Time.unscaledTime;
+            }
+
+            float scroll = Input.mouseScrollDelta.y;
+            bool orbiting = Input.GetMouseButton(1);
+            bool panning = Input.GetMouseButton(2) ||
+                           (Input.GetMouseButton(0) && !Input.GetMouseButtonDown(0));
+            if (!orbiting && !panning && Mathf.Abs(scroll) < .001f)
+                return;
+
+            EnsureManualCameraState();
+
+            if (orbiting)
+            {
+                manualYaw += Input.GetAxis("Mouse X") * 2.2f;
+                manualPitch = Mathf.Clamp(
+                    manualPitch - Input.GetAxis("Mouse Y") * 1.8f,
+                    8f,
+                    82f
+                );
+            }
+
+            if (panning)
+            {
+                Vector3 right = transform.right;
+                right.y = 0f;
+                if (right.sqrMagnitude > .001f)
+                    right.Normalize();
+                Vector3 forward = Vector3.Cross(right, Vector3.up);
+                float scale = Mathf.Max(1f, manualDistance) * .0025f;
+                manualFocus -= right * Input.GetAxis("Mouse X") * scale;
+                manualFocus -= forward * Input.GetAxis("Mouse Y") * scale;
+            }
+
+            if (Mathf.Abs(scroll) > .001f)
+            {
+                bool hasAnchor = TryGetMousePlanePoint(manualFocus.y, out Vector3 before);
+                manualDistance = Mathf.Clamp(
+                    manualDistance * Mathf.Exp(-scroll * .13f),
+                    8f,
+                    520f
+                );
+                UpdateManualCameraTransform(true);
+                if (hasAnchor && TryGetMousePlanePoint(manualFocus.y, out Vector3 after))
+                    manualFocus += before - after;
+            }
+        }
+
+        private void EnsureManualCameraState()
+        {
+            if (manualCameraActive)
+                return;
+
+            manualFocus = GetSceneFocus();
+            Vector3 offset = transform.position - manualFocus;
+            manualDistance = Mathf.Clamp(offset.magnitude, 8f, 520f);
+            if (offset.sqrMagnitude > .001f)
+            {
+                Vector3 direction = offset.normalized;
+                manualPitch = Mathf.Clamp(
+                    Mathf.Asin(Mathf.Clamp(direction.y, -1f, 1f)) * Mathf.Rad2Deg,
+                    8f,
+                    82f
+                );
+                manualYaw = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+            }
+            manualCameraActive = true;
+        }
+
+        private void UpdateManualCameraView()
+        {
+            UpdateManualCameraTransform(false);
+            initialized = true;
+        }
+
+        private void UpdateManualCameraTransform(bool immediate)
+        {
+            Quaternion orbit = Quaternion.Euler(manualPitch, manualYaw, 0f);
+            Vector3 desiredPosition = manualFocus + orbit * Vector3.forward * manualDistance;
+            Quaternion desiredRotation = Quaternion.LookRotation(
+                manualFocus - desiredPosition,
+                Vector3.up
+            );
+            if (immediate)
+            {
+                transform.SetPositionAndRotation(desiredPosition, desiredRotation);
+                return;
+            }
+
+            float positionT = 1f - Mathf.Exp(-positionSmooth * Time.deltaTime);
+            float rotationT = 1f - Mathf.Exp(-rotationSmooth * Time.deltaTime);
+            transform.position = Vector3.Lerp(transform.position, desiredPosition, positionT);
+            transform.rotation = Quaternion.Slerp(transform.rotation, desiredRotation, rotationT);
+        }
+
+        private bool TryGetMousePlanePoint(float planeY, out Vector3 point)
+        {
+            Ray ray = attachedCamera.ScreenPointToRay(Input.mousePosition);
+            Plane plane = new Plane(Vector3.up, new Vector3(0f, planeY, 0f));
+            if (plane.Raycast(ray, out float distance))
+            {
+                point = ray.GetPoint(distance);
+                return true;
+            }
+            point = default;
+            return false;
+        }
+
         private void SetMode(ViewMode nextMode)
         {
             if (mode == nextMode)
                 return;
 
             mode = nextMode;
+            manualCameraActive = false;
             initialized = false;
             if (mode == ViewMode.Action)
                 actionDistance = 0f;
@@ -870,7 +1022,7 @@ namespace UavUsv
         {
             EnsureGuiStyles();
             float uiScale = RuntimeGuiScale();
-            if (showAgentLabels)
+            if (showAgentLabels || showTargetLabels)
                 DrawAgentLabels();
 
             string modeName = mode == ViewMode.Action
@@ -1469,7 +1621,9 @@ namespace UavUsv
                 string objectName = subject.name;
                 bool isUav = IsUavName(objectName);
                 bool isTarget = IsEnemyName(objectName);
-                bool isFriendlyShip = objectName == "friendly_ship";
+                bool isProtected = IsProtectedName(objectName);
+                if (!showAgentLabels && !(showTargetLabels && (isTarget || isProtected)))
+                    continue;
                 float fallbackHeight = isUav ? 2f : isTarget ? 4.2f : 4.6f;
                 Vector3 worldPoint = subject.position + Vector3.up * fallbackHeight;
                 if (TryGetVisualBounds(subject, out Bounds visualBounds))
@@ -1492,8 +1646,8 @@ namespace UavUsv
                     : "我方 ";
                 string label = isTarget
                     ? "敌方 " + objectName
-                    : isFriendlyShip
-                        ? "保护 " + objectName
+                    : isProtected
+                        ? "护航 " + objectName
                     : rolePrefix + objectName;
                 GUIStyle style = isTarget
                     ? targetLabelStyle
@@ -1520,8 +1674,21 @@ namespace UavUsv
 
         private static bool IsEnemyName(string value)
         {
-            return !string.IsNullOrEmpty(value) &&
-                   (value.Contains("Target") || value == "enemy_ship");
+            if (string.IsNullOrEmpty(value))
+                return false;
+            string normalized = value.Trim().ToUpperInvariant();
+            return normalized == "ENEMY_SHIP" ||
+                   normalized.StartsWith("TARGET-") ||
+                   normalized.StartsWith("THREAT-");
+        }
+
+        private static bool IsProtectedName(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return false;
+            string normalized = value.Trim().ToUpperInvariant();
+            return normalized == "FRIENDLY_SHIP" ||
+                   normalized.StartsWith("PROTECTED-");
         }
 
         private static string AgentNumber(string value)

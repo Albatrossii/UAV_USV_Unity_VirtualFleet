@@ -21,9 +21,9 @@ namespace UavUsv.PlatformTools
         public const string Version = "2.0";
         public const string RuntimeMode = "VIRTUAL_SIMULATION";
         public const string GlobalCoordinateFrame = "GLOBAL_ENU";
-        public const int MaxUavCount = 100;
-        public const int MaxUsvCount = 100;
-        public const int FixedTargetCount = 1;
+        public const int MaxUavCount = 128;
+        public const int MaxUsvCount = 128;
+        public const int MaxTargetCount = 12;
     }
 
     public static class VirtualFleetAlgorithms

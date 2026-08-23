@@ -12,8 +12,9 @@ namespace UavUsv
     {
         public const int DefaultUavCount = 3;
         public const int DefaultUsvCount = 3;
-        public const int MaximumUavCount = 100;
-        public const int MaximumUsvCount = 100;
+        public const int MaximumUavCount = 128;
+        public const int MaximumUsvCount = 128;
+        public const int MaximumTargetCount = 12;
         public const int DefaultRandomSeed = 20260814;
 
         private readonly List<VirtualFleetDeviceState> uavs = new List<VirtualFleetDeviceState>();
@@ -23,7 +24,8 @@ namespace UavUsv
         private int nextUsvNumber = 1;
         private int currentRandomSeed = DefaultRandomSeed;
         private VirtualVehicleFactory factory;
-        private Transform externalTargetTransform;
+        private Transform externalProtectedTargetTransform;
+        private Transform externalThreatTargetTransform;
         private VirtualFleetMissionState missionState = VirtualFleetMissionState.Stopped;
 
         public VirtualFleetMissionState MissionState => missionState;
@@ -41,6 +43,15 @@ namespace UavUsv
         public event Action FleetChanged;
         public event Action<VirtualFleetMissionState> MissionStateChanged;
 
+        private void LateUpdate()
+        {
+            float positionT = 1f - Mathf.Exp(-11f * Time.unscaledDeltaTime);
+            float rotationT = 1f - Mathf.Exp(-9f * Time.unscaledDeltaTime);
+            SmoothDevices(uavs, positionT, rotationT);
+            SmoothDevices(usvs, positionT, rotationT);
+            SmoothDevices(targets, positionT, rotationT);
+        }
+
         public void ConfigureSpawnPoints(
             Transform[] uavPads,
             Vector3[] usvPositions,
@@ -51,16 +62,28 @@ namespace UavUsv
 
         public void ConfigureTargetTransform(Transform targetTransform)
         {
-            externalTargetTransform = targetTransform;
+            ConfigureTargetTransforms(null, targetTransform);
+        }
+
+        public void ConfigureTargetTransforms(
+            Transform protectedTargetTransform,
+            Transform threatTargetTransform)
+        {
+            externalProtectedTargetTransform = protectedTargetTransform;
+            externalThreatTargetTransform = threatTargetTransform;
             if (factory == null)
                 factory = new VirtualVehicleFactory(null, null, null);
-            factory.SetTargetTransform(targetTransform);
+            factory.SetTargetTransforms(
+                protectedTargetTransform,
+                threatTargetTransform
+            );
         }
 
         public void Initialize(
             int uavCount = DefaultUavCount,
             int usvCount = DefaultUsvCount,
-            int seed = DefaultRandomSeed)
+            int seed = DefaultRandomSeed,
+            string[] targetCodes = null)
         {
             if (!CanModifyFleet)
                 return;
@@ -76,7 +99,12 @@ namespace UavUsv
                 AddUavInternal();
             for (int i = 0; i < Mathf.Clamp(usvCount, 1, MaximumUsvCount); i++)
                 AddUsvInternal();
-            AddTargetInternal();
+            string[] requestedTargets = targetCodes == null || targetCodes.Length == 0
+                ? new[] { "TARGET-001" }
+                : targetCodes;
+            int targetLimit = Mathf.Clamp(requestedTargets.Length, 1, MaximumTargetCount);
+            for (int i = 0; i < targetLimit; i++)
+                AddTargetInternal(requestedTargets[i], i);
             NotifyFleetChanged();
         }
 
@@ -90,9 +118,27 @@ namespace UavUsv
             if (state == null || !state.transform)
                 return false;
 
+            state.desiredPosition = position;
+            state.desiredRotation = rotation;
+            state.hasDesiredPose = true;
+            if (!string.IsNullOrWhiteSpace(status))
+                state.status = status.Trim().ToUpperInvariant();
+            return true;
+        }
+
+        public bool TryApplyPoseImmediate(
+            string deviceCode,
+            Vector3 position,
+            Quaternion rotation,
+            string status)
+        {
+            VirtualFleetDeviceState state = FindDevice(deviceCode);
+            if (state == null || !state.transform)
+                return false;
             state.transform.SetPositionAndRotation(position, rotation);
-            state.position = position;
-            state.rotation = rotation;
+            state.position = state.desiredPosition = position;
+            state.rotation = state.desiredRotation = rotation;
+            state.hasDesiredPose = true;
             if (!string.IsNullOrWhiteSpace(status))
                 state.status = status.Trim().ToUpperInvariant();
             return true;
@@ -104,8 +150,7 @@ namespace UavUsv
             Quaternion rotation,
             string status)
         {
-            if (string.IsNullOrWhiteSpace(deviceCode) ||
-                !deviceCode.Trim().StartsWith("TARGET-", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(deviceCode))
                 return false;
             return TryApplyPose(deviceCode, position, rotation, status);
         }
@@ -118,6 +163,11 @@ namespace UavUsv
         public Transform[] GetUsvTransforms()
         {
             return ToTransformArray(usvs);
+        }
+
+        public Transform[] GetTargetTransforms()
+        {
+            return ToTransformArray(targets);
         }
 
         public bool AddUav()
@@ -173,10 +223,14 @@ namespace UavUsv
         public void ResetMission()
         {
             SetMissionState(VirtualFleetMissionState.Reset);
+            string[] targetCodes = new string[targets.Count];
+            for (int i = 0; i < targets.Count; i++)
+                targetCodes[i] = targets[i].deviceCode;
             Initialize(
                 Mathf.Max(1, uavs.Count),
                 Mathf.Max(1, usvs.Count),
-                currentRandomSeed
+                currentRandomSeed,
+                targetCodes
             );
             SetMissionState(VirtualFleetMissionState.Stopped);
         }
@@ -212,13 +266,12 @@ namespace UavUsv
             usvs.Add(CreateState(code, "USV", model));
         }
 
-        private void AddTargetInternal()
+        private void AddTargetInternal(string code, int index)
         {
-            const string code = "TARGET-001";
             Transform model = factory.Create(
                 VirtualFleetDeviceType.Target,
                 code,
-                targets.Count
+                index
             );
             targets.Add(CreateState(code, "TARGET", model));
         }
@@ -235,8 +288,42 @@ namespace UavUsv
                 status = "STOPPED",
                 position = model.position,
                 rotation = model.rotation,
+                desiredPosition = model.position,
+                desiredRotation = model.rotation,
+                hasDesiredPose = true,
                 transform = model
             };
+        }
+
+        private static void SmoothDevices(
+            List<VirtualFleetDeviceState> devices,
+            float positionT,
+            float rotationT)
+        {
+            for (int i = 0; i < devices.Count; i++)
+            {
+                VirtualFleetDeviceState state = devices[i];
+                if (state == null || !state.transform || !state.hasDesiredPose)
+                    continue;
+                // A large discontinuity is a scenario reset or coordinate
+                // frame change, not physical motion. Snap it once; normal
+                // 10 Hz algorithm frames are interpolated every render frame.
+                if ((state.transform.position - state.desiredPosition).sqrMagnitude > 400f)
+                    state.transform.position = state.desiredPosition;
+                else
+                    state.transform.position = Vector3.Lerp(
+                        state.transform.position,
+                        state.desiredPosition,
+                        positionT
+                    );
+                state.transform.rotation = Quaternion.Slerp(
+                    state.transform.rotation,
+                    state.desiredRotation,
+                    rotationT
+                );
+                state.position = state.transform.position;
+                state.rotation = state.transform.rotation;
+            }
         }
 
         private bool Remove(List<VirtualFleetDeviceState> devices, string deviceCode)
@@ -263,7 +350,8 @@ namespace UavUsv
                 if (usvs[i].transform) Destroy(usvs[i].transform.gameObject);
             for (int i = 0; i < targets.Count; i++)
                 if (targets[i].transform &&
-                    targets[i].transform != externalTargetTransform)
+                    targets[i].transform != externalProtectedTargetTransform &&
+                    targets[i].transform != externalThreatTargetTransform)
                     Destroy(targets[i].transform.gameObject);
             uavs.Clear();
             usvs.Clear();

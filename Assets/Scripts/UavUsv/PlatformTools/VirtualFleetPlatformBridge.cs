@@ -19,6 +19,7 @@ namespace UavUsv.PlatformTools
         private MissionState missionState = MissionState.Stopped;
         private WebCommandBridge cameraBridge;
         private VirtualFleetPoseOwnershipGuard poseOwnershipGuard;
+        private VirtualFleetSceneSafety sceneSafety;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -191,7 +192,17 @@ namespace UavUsv.PlatformTools
                     targetCount = input.targetCount > 0 ? input.targetCount : 1,
                     initialSpeedMps = input.initialSpeedMps,
                     initialHeadingDeg = input.initialHeadingDeg,
-                    seed = input.seed
+                    seed = input.seed,
+                    // The Vue layout is the authoritative initial scene for
+                    // standalone simulation.  Dropping these fields made the
+                    // factory fall back to random spawn points, including
+                    // Catalina terrain and the shore platforms.
+                    initialPosesCoordinateFrame = string.IsNullOrWhiteSpace(
+                        input.initialPosesCoordinateFrame
+                    )
+                        ? VirtualFleetProtocol.GlobalCoordinateFrame
+                        : input.initialPosesCoordinateFrame,
+                    initialPoses = input.initialPoses
                 }
             });
         }
@@ -637,15 +648,32 @@ namespace UavUsv.PlatformTools
 
         private static string[] BuildDeviceCodes(UavUsv.VirtualFleetConfig config)
         {
-            var codes = new string[config.uavCount + config.usvCount + config.targetCount];
-            int index = 0;
+            var codes = new System.Collections.Generic.List<string>(
+                config.uavCount + config.usvCount + config.targetCount
+            );
             for (int i = 1; i <= config.uavCount; i++)
-                codes[index++] = "UAV-" + i.ToString("D3");
+                codes.Add("UAV-" + i.ToString("D3"));
             for (int i = 1; i <= config.usvCount; i++)
-                codes[index++] = "USV-" + i.ToString("D3");
-            for (int i = 1; i <= config.targetCount; i++)
-                codes[index++] = "TARGET-" + i.ToString("D3");
-            return codes;
+                codes.Add("USV-" + i.ToString("D3"));
+            if (config.initialPoses != null)
+                for (int i = 0; i < config.initialPoses.Length; i++)
+                {
+                    UavUsv.VirtualPose pose = config.initialPoses[i];
+                    if (pose == null || string.IsNullOrWhiteSpace(pose.deviceCode))
+                        continue;
+                    if ((pose.deviceType ?? string.Empty).IndexOf(
+                            "TARGET",
+                            StringComparison.OrdinalIgnoreCase
+                        ) < 0)
+                        continue;
+                    string code = pose.deviceCode.Trim().ToUpperInvariant().Replace('_', '-');
+                    if (!codes.Contains(code))
+                        codes.Add(code);
+                }
+            int missingTargets = config.uavCount + config.usvCount + config.targetCount - codes.Count;
+            for (int i = 0; i < missingTargets; i++)
+                codes.Add("TARGET-" + (codes.Count - config.uavCount - config.usvCount + 1).ToString("D3"));
+            return codes.ToArray();
         }
 
         private static UavUsv.VirtualFleetConfig ToRuntimeConfig(
@@ -750,6 +778,7 @@ namespace UavUsv.PlatformTools
             {
                 DisableLegacyCollisionSafety();
                 EnsurePoseOwnershipGuard();
+                DisableVirtualFleetSceneSafety();
                 return true;
             }
             EmitError(requestId, RuntimeNotReadyCode, "Virtual fleet runtime is not registered");
@@ -769,6 +798,19 @@ namespace UavUsv.PlatformTools
                 poseOwnershipGuard =
                     gameObject.AddComponent<VirtualFleetPoseOwnershipGuard>();
             poseOwnershipGuard.Initialize(controller);
+        }
+
+        private void DisableVirtualFleetSceneSafety()
+        {
+            VirtualFleetScenarioController controller =
+                runtime as VirtualFleetScenarioController;
+            if (!controller)
+                return;
+
+            if (!sceneSafety)
+                sceneSafety = controller.GetComponent<VirtualFleetSceneSafety>();
+            if (sceneSafety)
+                sceneSafety.enabled = false;
         }
 
         private static void DisableLegacyCollisionSafety()
@@ -844,6 +886,8 @@ namespace UavUsv.PlatformTools
             public float initialSpeedMps;
             public float initialHeadingDeg;
             public int seed;
+            public string initialPosesCoordinateFrame;
+            public UavUsv.VirtualPose[] initialPoses;
         }
 
         [Serializable]
