@@ -16,6 +16,9 @@ namespace UavUsv
         private ExternalPoseWebSocketClient receiver;
         private RuntimeCollisionSafety collisionSafety;
         private MultiAgentCaptureDefenseScenario localScenario;
+        private GameObject islandTerrain;
+        private SydneyCoastRuntime visualCoast;
+        private GameObject shoreCommandBase;
         private VirtualFleetManager virtualFleet;
         private ChaseCamera virtualFleetChaseCamera;
         private SensorViewPip virtualFleetSensorPip;
@@ -54,17 +57,17 @@ namespace UavUsv
 
             BuildLighting();
             BuildOcean();
-            GameObject islandTerrain = CatalinaIslandRuntime.CreateVisualTerrain(
+            islandTerrain = CatalinaIslandRuntime.CreateVisualTerrain(
                 EnvironmentEnu(0f, 0f, -.8f),
                 EnvironmentPresentationScale
             );
             // Green coastal rim remains outside Gazebo's full ocean boundary.
-            SydneyCoastRuntime.CreateVisualBackdrop(
+            visualCoast = SydneyCoastRuntime.CreateVisualBackdrop(
                 Vector3.zero,
                 EnvironmentPresentationScale
             );
             Transform[] uavPads = BuildIslandUavBase();
-            BuildShoreCommandBase();
+            shoreCommandBase = BuildShoreCommandBase();
 
             Vector3[] usvPos =
             {
@@ -139,6 +142,25 @@ namespace UavUsv
 
             BuildCamera(usvs, uavs, friendly, enemy);
             localScenario = FindObjectOfType<MultiAgentCaptureDefenseScenario>();
+        }
+
+        /// <summary>
+        /// Keep the regular ROS presentation scene intact, but give the
+        /// browser virtual-fleet experiment an uncluttered open-water view.
+        /// The Catalina island terrain and its UAV base remain active because
+        /// the base is intended to sit on the mountain, not float on the sea.
+        /// </summary>
+        public void SetVirtualSimulationEnvironment(bool openWaterOnly)
+        {
+            // Keep the mountain under the landing platform. Only the outer
+            // coastal scenery and shore command complex are removed from the
+            // virtual-fleet presentation.
+            if (islandTerrain)
+                islandTerrain.SetActive(true);
+            if (visualCoast)
+                visualCoast.gameObject.SetActive(!openWaterOnly);
+            if (shoreCommandBase)
+                shoreCommandBase.SetActive(!openWaterOnly);
         }
 
         private void OnDestroy()
@@ -403,7 +425,7 @@ namespace UavUsv
             return pads;
         }
 
-        private static void BuildShoreCommandBase()
+        private static GameObject BuildShoreCommandBase()
         {
             Transform root = new GameObject("shore_command_base").transform;
             Place(root, EnvironmentEnu(-35f, -190f, 17.5f), .559f);
@@ -437,6 +459,7 @@ namespace UavUsv
             Cylinder("antenna_mast", root, -5f, 3f, 13.5f, .18f, 10f, metal);
             Box("generator", root, -6f, -5f, 9.1f, 3.8f, 2.6f, 1.8f, roof);
             Box("equipment_console", root, 5f, -4.8f, 9f, 3f, 1.5f, 1.6f, metal);
+            return root.gameObject;
         }
 
         public static Transform BuildVirtualUsv(string name, Color idColor)

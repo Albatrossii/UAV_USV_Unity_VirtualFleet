@@ -14,6 +14,7 @@ namespace UavUsv
     {
         [SerializeField] private VirtualFleetManager fleetManager;
         private VirtualFleetSceneSafety initializationSafety;
+        private SimulationBootstrap simulationBootstrap;
 
         public VirtualFleetManager FleetManager => fleetManager;
         public bool CanModifyFleet => fleetManager && fleetManager.CanModifyFleet;
@@ -25,6 +26,7 @@ namespace UavUsv
         {
             if (!fleetManager)
                 fleetManager = GetComponent<VirtualFleetManager>();
+            simulationBootstrap = GetComponent<SimulationBootstrap>();
         }
 
         public void Bind(VirtualFleetManager manager)
@@ -41,6 +43,8 @@ namespace UavUsv
                 throw new InvalidOperationException("scenario_locked");
             ValidateConfig(config);
             CurrentConfig = CloneConfig(config);
+            if (simulationBootstrap)
+                simulationBootstrap.SetVirtualSimulationEnvironment(true);
             LastAppliedSequence = -1;
         }
 
@@ -51,6 +55,9 @@ namespace UavUsv
                 throw new InvalidOperationException("scenario_locked");
             if (CurrentConfig == null)
                 CurrentConfig = new VirtualFleetConfig();
+
+            if (simulationBootstrap)
+                simulationBootstrap.SetVirtualSimulationEnvironment(true);
 
             fleetManager.Initialize(
                 CurrentConfig.uavCount,

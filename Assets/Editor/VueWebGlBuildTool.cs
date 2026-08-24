@@ -60,6 +60,7 @@ namespace UavUsv.Editor.Tools
             Debug.Log("Vue WebGL build complete: " + outputPath);
         }
 
+        [MenuItem("UAV-USV/Tools/Build Virtual Fleet WebGL")]
         public static void BuildVirtualFleet()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode)
@@ -67,7 +68,7 @@ namespace UavUsv.Editor.Tools
 
             string requestedOutput = Environment.GetEnvironmentVariable("UAV_USV_WEBGL_OUTPUT");
             string outputPath = Path.GetFullPath(string.IsNullOrWhiteSpace(requestedOutput)
-                ? @"C:\Users\86188\Desktop\mxy\UAV_USV_Platform\frontend\public\unity-virtual-fleet"
+                ? @"F:\UVA_USV\UAV_USV_Platform\frontend\public\unity-virtual-fleet"
                 : requestedOutput);
             string integrationIndexPath = Path.Combine(outputPath, "index.html");
             string integrationIndex = File.Exists(integrationIndexPath)
