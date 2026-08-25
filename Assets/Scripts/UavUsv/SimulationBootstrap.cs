@@ -19,6 +19,7 @@ namespace UavUsv
         private GameObject islandTerrain;
         private SydneyCoastRuntime visualCoast;
         private GameObject shoreCommandBase;
+        private Transform islandUavBase;
         private VirtualFleetManager virtualFleet;
         private ChaseCamera virtualFleetChaseCamera;
         private SensorViewPip virtualFleetSensorPip;
@@ -67,6 +68,7 @@ namespace UavUsv
                 EnvironmentPresentationScale
             );
             Transform[] uavPads = BuildIslandUavBase();
+            islandUavBase = uavPads.Length > 0 ? uavPads[0].parent : null;
             shoreCommandBase = BuildShoreCommandBase();
 
             Vector3[] usvPos =
@@ -141,6 +143,7 @@ namespace UavUsv
             );
 
             BuildCamera(usvs, uavs, friendly, enemy);
+            SetVirtualScenarioReady(false);
             localScenario = FindObjectOfType<MultiAgentCaptureDefenseScenario>();
         }
 
@@ -161,6 +164,25 @@ namespace UavUsv
                 visualCoast.gameObject.SetActive(!openWaterOnly);
             if (shoreCommandBase)
                 shoreCommandBase.SetActive(!openWaterOnly);
+        }
+
+        public void SetVirtualScenarioReady(bool ready)
+        {
+            // Before loadScenario there is no authoritative fleet layout.
+            // Show only open water instead of stale bootstrap craft and land,
+            // then reveal the complete generated scenario atomically.
+            if (islandTerrain)
+                islandTerrain.SetActive(ready);
+            if (visualCoast)
+                visualCoast.gameObject.SetActive(false);
+            if (shoreCommandBase)
+                shoreCommandBase.SetActive(ready);
+            if (islandUavBase)
+                islandUavBase.gameObject.SetActive(ready);
+            if (virtualFleet)
+                virtualFleet.SetFleetVisible(ready);
+            if (virtualFleetChaseCamera)
+                virtualFleetChaseCamera.SetScenarioInteractionEnabled(ready);
         }
 
         private void OnDestroy()
@@ -198,11 +220,20 @@ namespace UavUsv
                     virtualFleetChaseCamera.companion = uavs[0];
 
                 var subjects = new List<Transform>(
-                    usvs.Length + uavs.Length + missionTargets.Length
+                    usvs.Length + uavs.Length + missionTargets.Length + 1
                 );
                 subjects.AddRange(usvs);
                 subjects.AddRange(uavs);
                 subjects.AddRange(missionTargets);
+                // Keep the shoreline operations base in the default/global
+                // composition without fitting the camera to the enormous
+                // island renderer. Its compact bounds are enough to retain
+                // the recognizable island edge and helipad in frame while
+                // preserving readable vehicle scale.
+                if (shoreCommandBase)
+                    subjects.Add(shoreCommandBase.transform);
+                if (islandUavBase)
+                    subjects.Add(islandUavBase);
                 virtualFleetChaseCamera.SetGroupTargets(subjects.ToArray());
 
                 for (int i = 0; i < missionTargets.Length; i++)
@@ -844,6 +875,10 @@ namespace UavUsv
             subjects.AddRange(uavs);
             subjects.Add(friendly);
             subjects.Add(enemy);
+            if (shoreCommandBase)
+                subjects.Add(shoreCommandBase.transform);
+            if (islandUavBase)
+                subjects.Add(islandUavBase);
             chase.SetGroupTargets(subjects.ToArray());
             virtualFleetChaseCamera = chase;
             virtualFleetFriendlyTarget = friendly;

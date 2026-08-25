@@ -43,13 +43,19 @@ namespace UavUsv
         public event Action FleetChanged;
         public event Action<VirtualFleetMissionState> MissionStateChanged;
 
+        public void SetFleetVisible(bool visible)
+        {
+            SetVisible(uavs, visible);
+            SetVisible(usvs, visible);
+            SetVisible(targets, visible);
+        }
+
         private void LateUpdate()
         {
             float positionT = 1f - Mathf.Exp(-11f * Time.unscaledDeltaTime);
-            float rotationT = 1f - Mathf.Exp(-9f * Time.unscaledDeltaTime);
-            SmoothDevices(uavs, positionT, rotationT);
-            SmoothDevices(usvs, positionT, rotationT);
-            SmoothDevices(targets, positionT, rotationT);
+            SmoothDevices(uavs, positionT, Time.unscaledDeltaTime);
+            SmoothDevices(usvs, positionT, Time.unscaledDeltaTime);
+            SmoothDevices(targets, positionT, Time.unscaledDeltaTime);
         }
 
         public void ConfigureSpawnPoints(
@@ -298,7 +304,7 @@ namespace UavUsv
         private static void SmoothDevices(
             List<VirtualFleetDeviceState> devices,
             float positionT,
-            float rotationT)
+            float deltaTime)
         {
             for (int i = 0; i < devices.Count; i++)
             {
@@ -308,7 +314,8 @@ namespace UavUsv
                 // A large discontinuity is a scenario reset or coordinate
                 // frame change, not physical motion. Snap it once; normal
                 // 10 Hz algorithm frames are interpolated every render frame.
-                if ((state.transform.position - state.desiredPosition).sqrMagnitude > 400f)
+                Vector3 positionBefore = state.transform.position;
+                if ((positionBefore - state.desiredPosition).sqrMagnitude > 400f)
                     state.transform.position = state.desiredPosition;
                 else
                     state.transform.position = Vector3.Lerp(
@@ -316,11 +323,34 @@ namespace UavUsv
                         state.desiredPosition,
                         positionT
                     );
-                state.transform.rotation = Quaternion.Slerp(
+                float movedSqr = (state.transform.position - positionBefore).sqrMagnitude;
+                float maximumYawRate = state.deviceType == "USV"
+                    ? 28f
+                    : state.deviceType == "UAV" ? 110f : 36f;
+                // A captured surface craft may be position-stationary while
+                // it still has to point its bow at the assigned target. Do
+                // not freeze that final orientation. The angular dead-band
+                // filters tiny 10 Hz heading noise without preventing a real
+                // correction, and therefore applies at every fleet size.
+                float headingError = Quaternion.Angle(
                     state.transform.rotation,
-                    state.desiredRotation,
-                    rotationT
+                    state.desiredRotation
                 );
+                bool shouldRotate = state.deviceType != "USV"
+                    || movedSqr > 0.000004f
+                    || headingError > 0.35f;
+                if (shouldRotate)
+                {
+                    float appliedYawRate = state.deviceType == "USV"
+                        && movedSqr <= 0.000004f
+                        ? 90f
+                        : maximumYawRate;
+                    state.transform.rotation = Quaternion.RotateTowards(
+                        state.transform.rotation,
+                        state.desiredRotation,
+                        appliedYawRate * Mathf.Max(0f, deltaTime)
+                    );
+                }
                 state.position = state.transform.position;
                 state.rotation = state.transform.rotation;
             }
@@ -401,6 +431,15 @@ namespace UavUsv
             for (int i = 0; i < devices.Count; i++)
                 result[i] = devices[i].transform;
             return result;
+        }
+
+        private static void SetVisible(
+            List<VirtualFleetDeviceState> devices,
+            bool visible)
+        {
+            for (int i = 0; i < devices.Count; i++)
+                if (devices[i] != null && devices[i].transform)
+                    devices[i].transform.gameObject.SetActive(visible);
         }
     }
 }

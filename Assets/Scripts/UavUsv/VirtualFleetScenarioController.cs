@@ -44,7 +44,10 @@ namespace UavUsv
             ValidateConfig(config);
             CurrentConfig = CloneConfig(config);
             if (simulationBootstrap)
+            {
                 simulationBootstrap.SetVirtualSimulationEnvironment(true);
+                simulationBootstrap.SetVirtualScenarioReady(false);
+            }
             LastAppliedSequence = -1;
         }
 
@@ -67,6 +70,8 @@ namespace UavUsv
             );
             ApplyInitialScenarioPoses();
             ValidateInitialScenarioPoses();
+            if (simulationBootstrap)
+                simulationBootstrap.SetVirtualScenarioReady(true);
             LastAppliedSequence = -1;
         }
 
@@ -319,10 +324,10 @@ namespace UavUsv
                     pose.northM,
                     pose.upM
                 );
-                Quaternion rotation = Quaternion.Euler(
-                    0f,
-                    -NormalizeHeading(pose.headingDeg),
-                    0f
+                VirtualFleetDeviceState known = FindState(pose.deviceCode);
+                Quaternion rotation = ProtocolHeadingToModelRotation(
+                    known == null ? string.Empty : known.deviceType,
+                    pose.headingDeg
                 );
                 bool updated = fleetManager.TryApplyPoseImmediate(
                     pose.deviceCode,
@@ -379,10 +384,9 @@ namespace UavUsv
                 pose.northM,
                 pose.upM
             );
-            Quaternion rotation = Quaternion.Euler(
-                0f,
-                NormalizeHeading(pose.headingDeg) - 90f,
-                0f
+            Quaternion rotation = ProtocolHeadingToModelRotation(
+                known.deviceType,
+                pose.headingDeg
             );
             bool applied = target
                 ? TryApplyTargetPose(code, position, rotation, pose.state)
@@ -407,6 +411,24 @@ namespace UavUsv
         {
             float normalized = heading % 360f;
             return normalized < 0f ? normalized + 360f : normalized;
+        }
+
+        /// <summary>
+        /// Converts the protocol heading (0=east, 90=north) to the local
+        /// forward axis used by each rendered model. Surface-vessel meshes
+        /// use local +X (Transform.right) as their bow; UAV meshes retain the
+        /// legacy local +Z mapping.
+        /// </summary>
+        internal static Quaternion ProtocolHeadingToModelRotation(
+            string deviceType,
+            float headingDeg)
+        {
+            float heading = NormalizeHeading(headingDeg);
+            bool bowUsesLocalRight =
+                string.Equals(deviceType, "USV", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(deviceType, "TARGET", StringComparison.OrdinalIgnoreCase);
+            float unityYaw = bowUsesLocalRight ? -heading : heading - 90f;
+            return Quaternion.Euler(0f, unityYaw, 0f);
         }
 
         private static VirtualPoseBatchApplyResult Failure(

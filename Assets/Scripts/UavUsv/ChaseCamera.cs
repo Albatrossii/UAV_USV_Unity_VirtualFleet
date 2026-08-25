@@ -82,10 +82,14 @@ namespace UavUsv
         private float orbitPitch = 22f;
         private float orbitDistance = 42f;
         private bool manualCameraActive;
+        private bool scenarioInteractionEnabled;
         private Vector3 manualFocus;
         private float manualYaw = -35f;
         private float manualPitch = 32f;
         private float manualDistance = 42f;
+        private float manualTargetDistance = 42f;
+        private bool pendingZoomAnchor;
+        private Vector3 pendingZoomWorldPoint;
         private float lastPrimaryClickTime = -10f;
         private float actionDistance;
         private float overviewDistance;
@@ -193,11 +197,10 @@ namespace UavUsv
                     );
                 }
 
-                orbitDistance = Mathf.Clamp(
-                    orbitDistance - Input.mouseScrollDelta.y * 3f,
-                    8f,
-                    180f
-                );
+                // Wheel input is owned exclusively by
+                // UpdateManualCameraInput. Keeping a second fixed-distance
+                // zoom path here made high-resolution wheels feel like a
+                // one-frame jump and produced different behaviour by mode.
             }
         }
 
@@ -867,6 +870,11 @@ namespace UavUsv
         {
             if (!attachedCamera || !attachedCamera.enabled)
                 return;
+            // The bootstrap scene has no authoritative scenario bounds yet.
+            // Wheel anchoring against that placeholder view can put the
+            // orbit focus behind the camera and appear to flip the world.
+            if (!scenarioInteractionEnabled)
+                return;
 
             Vector3 mouse = Input.mousePosition;
             bool pointerInside = mouse.x >= 0f && mouse.y >= 0f &&
@@ -888,7 +896,10 @@ namespace UavUsv
                 lastPrimaryClickTime = Time.unscaledTime;
             }
 
-            float scroll = Input.mouseScrollDelta.y;
+            // Browsers and touchpads report very different wheel magnitudes.
+            // Consume at most one normalized notch per rendered frame and let
+            // the camera converge toward a target distance.
+            float scroll = Mathf.Clamp(Input.mouseScrollDelta.y, -1f, 1f);
             bool orbiting = Input.GetMouseButton(1);
             bool panning = Input.GetMouseButton(2) ||
                            (Input.GetMouseButton(0) && !Input.GetMouseButtonDown(0));
@@ -921,15 +932,20 @@ namespace UavUsv
 
             if (Mathf.Abs(scroll) > .001f)
             {
-                bool hasAnchor = TryGetMousePlanePoint(manualFocus.y, out Vector3 before);
-                manualDistance = Mathf.Clamp(
-                    manualDistance * Mathf.Exp(-scroll * .13f),
+                pendingZoomAnchor = TryGetMousePlanePoint(
+                    manualFocus.y,
+                    out pendingZoomWorldPoint
+                );
+                // Pulling back changes the apparent device size especially
+                // quickly in a top-down view, so use a finer asymmetric
+                // exponential step. One wheel notch now changes distance by
+                // about 3% outward and 4.5% inward instead of 8.5% both ways.
+                float zoomStep = scroll < 0f ? .030f : .045f;
+                manualTargetDistance = Mathf.Clamp(
+                    manualTargetDistance * Mathf.Exp(-scroll * zoomStep),
                     8f,
                     520f
                 );
-                UpdateManualCameraTransform(true);
-                if (hasAnchor && TryGetMousePlanePoint(manualFocus.y, out Vector3 after))
-                    manualFocus += before - after;
             }
         }
 
@@ -941,6 +957,7 @@ namespace UavUsv
             manualFocus = GetSceneFocus();
             Vector3 offset = transform.position - manualFocus;
             manualDistance = Mathf.Clamp(offset.magnitude, 8f, 520f);
+            manualTargetDistance = manualDistance;
             if (offset.sqrMagnitude > .001f)
             {
                 Vector3 direction = offset.normalized;
@@ -956,7 +973,29 @@ namespace UavUsv
 
         private void UpdateManualCameraView()
         {
+            float zoomT = 1f - Mathf.Exp(-8f * Time.unscaledDeltaTime);
+            manualDistance = Mathf.Lerp(
+                manualDistance,
+                manualTargetDistance,
+                zoomT
+            );
             UpdateManualCameraTransform(false);
+            if (pendingZoomAnchor &&
+                TryGetMousePlanePoint(manualFocus.y, out Vector3 after))
+            {
+                // Preserve the world point below the cursor while zooming.
+                // Apply only a bounded fraction per frame to avoid a large pan
+                // when the ray becomes nearly parallel with the water plane.
+                Vector3 correction = pendingZoomWorldPoint - after;
+                correction = Vector3.ClampMagnitude(
+                    correction,
+                    Mathf.Max(1f, manualDistance * .08f)
+                );
+                manualFocus += correction;
+                UpdateManualCameraTransform(false);
+            }
+            if (Mathf.Abs(manualDistance - manualTargetDistance) < .02f)
+                pendingZoomAnchor = false;
             initialized = true;
         }
 
@@ -1000,6 +1039,7 @@ namespace UavUsv
 
             mode = nextMode;
             manualCameraActive = false;
+            pendingZoomAnchor = false;
             initialized = false;
             if (mode == ViewMode.Action)
                 actionDistance = 0f;
@@ -1680,6 +1720,18 @@ namespace UavUsv
             return normalized == "ENEMY_SHIP" ||
                    normalized.StartsWith("TARGET-") ||
                    normalized.StartsWith("THREAT-");
+        }
+
+        public void SetScenarioInteractionEnabled(bool enabled)
+        {
+            scenarioInteractionEnabled = enabled;
+            if (enabled)
+                return;
+            manualCameraActive = false;
+            pendingZoomAnchor = false;
+            initialized = false;
+            actionDistance = 0f;
+            overviewDistance = 0f;
         }
 
         private static bool IsProtectedName(string value)
