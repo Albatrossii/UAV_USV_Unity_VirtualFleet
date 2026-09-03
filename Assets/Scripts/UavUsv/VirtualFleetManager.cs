@@ -325,7 +325,11 @@ namespace UavUsv
                     );
                 float movedSqr = (state.transform.position - positionBefore).sqrMagnitude;
                 float maximumYawRate = state.deviceType == "USV"
-                    ? 28f
+                    // Algorithm frames may command up to seven degrees per
+                    // 100 ms tick. Match that physical envelope so a moving
+                    // boat does not visually trail its inward-facing ring
+                    // heading after the geometry is already valid.
+                    ? 72f
                     : state.deviceType == "UAV" ? 110f : 36f;
                 // A captured surface craft may be position-stationary while
                 // it still has to point its bow at the assigned target. Do
@@ -343,7 +347,7 @@ namespace UavUsv
                 {
                     float appliedYawRate = state.deviceType == "USV"
                         && movedSqr <= 0.000004f
-                        ? 90f
+                        ? 120f
                         : maximumYawRate;
                     state.transform.rotation = Quaternion.RotateTowards(
                         state.transform.rotation,

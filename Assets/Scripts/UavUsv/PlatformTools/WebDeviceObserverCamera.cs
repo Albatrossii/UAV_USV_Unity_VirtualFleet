@@ -40,6 +40,10 @@ namespace UavUsv.PlatformTools
         private bool trailSampleLogged;
         private int lastTrailDeviceCount = -1;
         private bool trailRecordingEnabled;
+        private float nextSceneTargetRefreshAt;
+        private Vector3 overviewFocus;
+        private float overviewDistance;
+        private bool overviewFrameInitialized;
 
         // Algorithm simulation intentionally ships without world-space
         // trajectories. Keeping this as a compile-time gate prevents mission
@@ -52,6 +56,7 @@ namespace UavUsv.PlatformTools
         private float interactionPitch;
         private float interactionDistance;
         private float lastPrimaryClickAt = -10f;
+        private float lastInteractionAt = -10f;
 
         private const int MaxTrailPoints = 180;
         private const float TrailSampleSeconds = .2f;
@@ -69,7 +74,7 @@ namespace UavUsv.PlatformTools
             observedCamera = camera;
             chaseCamera = chase;
             fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
-            RefreshSceneTargets();
+            RefreshSceneTargets(true);
         }
 
         public bool TrySelectDevice(
@@ -78,7 +83,7 @@ namespace UavUsv.PlatformTools
             out string profile,
             out string error)
         {
-            RefreshSceneTargets();
+            RefreshSceneTargets(true);
             string normalized = NormalizeDeviceCode(requestedCode);
             Transform match = null;
             for (int i = 0; i < sceneTargets.Count; i++)
@@ -134,7 +139,7 @@ namespace UavUsv.PlatformTools
             out string profile,
             out string error)
         {
-            RefreshSceneTargets();
+            RefreshSceneTargets(true);
             bool wantUav = string.Equals(kind, "UAV", StringComparison.OrdinalIgnoreCase);
             for (int i = 0; i < sceneTargets.Count; i++)
             {
@@ -155,13 +160,14 @@ namespace UavUsv.PlatformTools
             CurrentDeviceCode = string.Empty;
             mode = ObservationMode.Overview;
             ResetCameraInteraction();
+            overviewFrameInitialized = false;
             ActivateObserver();
             RefreshTrailVisibility();
         }
 
         public void SetLighthouse()
         {
-            RefreshSceneTargets();
+            RefreshSceneTargets(true);
             selectedSubject = null;
             CurrentDeviceCode = string.Empty;
             mode = ObservationMode.Lighthouse;
@@ -236,7 +242,7 @@ namespace UavUsv.PlatformTools
             if (mode == ObservationMode.None || !observedCamera)
                 return;
 
-            RefreshSceneTargets();
+            RefreshSceneTargets(false);
             UpdateFleetTrails();
             Vector3 desiredPosition;
             Vector3 focusPoint;
@@ -296,12 +302,23 @@ namespace UavUsv.PlatformTools
                 return;
             }
 
-            float scroll = Input.mouseScrollDelta.y;
+            float scroll = Mathf.Clamp(Input.mouseScrollDelta.y, -1f, 1f);
             bool interactionRequested = Input.GetMouseButton(1) ||
                                         Input.GetMouseButton(2) ||
                                         (Input.GetMouseButton(0) &&
                                          !Input.GetMouseButtonDown(0)) ||
                                         Mathf.Abs(scroll) > .001f;
+            if (interactionRequested)
+                lastInteractionAt = Time.unscaledTime;
+            else if (interactionMode == mode &&
+                     Time.unscaledTime - lastInteractionAt >= 2.5f)
+            {
+                // Manual inspection is temporary. Smoothly hand control back
+                // to mission framing so a later threat manoeuvre cannot leave
+                // active craft outside the WebGL viewport.
+                ResetCameraInteraction();
+                return;
+            }
             if (interactionMode != mode)
             {
                 if (!interactionRequested)
@@ -355,8 +372,9 @@ namespace UavUsv.PlatformTools
                     out Vector3 before
                 );
 
+                float zoomStep = scroll < 0f ? .030f : .045f;
                 interactionDistance = Mathf.Clamp(
-                    interactionDistance * Mathf.Exp(-scroll * .13f),
+                    interactionDistance * Mathf.Exp(-scroll * zoomStep),
                     mode == ObservationMode.Device ? 3.5f : 8f,
                     mode == ObservationMode.Device ? 90f : 360f
                 );
@@ -559,12 +577,83 @@ namespace UavUsv.PlatformTools
 
         private void CalculateOverview(out Vector3 position, out Vector3 focus)
         {
-            Vector3 groupCenter;
-            float spread;
-            CalculateGroupFrame(out groupCenter, out spread);
             const float elevationDegrees = 55f;
             const float overviewFov = 52f;
-            const float frameMargin = 1.18f;
+            const float frameMargin = 1.12f;
+            const float overviewYaw = -35f;
+            Vector3 yawRight = Quaternion.Euler(0f, overviewYaw, 0f) * Vector3.right;
+            Vector3 yawForward = Quaternion.Euler(0f, overviewYaw, 0f) * Vector3.forward;
+            Vector3 rawCenter = Vector3.zero;
+            int count = 0;
+            List<float> xSamples = new List<float>();
+            List<float> zSamples = new List<float>();
+            for (int i = 0; i < sceneTargets.Count; i++)
+            {
+                Transform item = sceneTargets[i];
+                if (!item) continue;
+                rawCenter += item.position;
+                xSamples.Add(item.position.x);
+                zSamples.Add(item.position.z);
+                count++;
+            }
+            if (count == 0)
+                rawCenter = selectedSubject ? selectedSubject.position : Vector3.zero;
+            else
+            {
+                // A mean is dominated by a single attacker that has moved far
+                // away and makes the whole fleet unreadably small. Use a
+                // robust median action centre, then frame the dense tactical
+                // group while still allowing the view to follow it smoothly.
+                xSamples.Sort();
+                zSamples.Sort();
+                int middle = count / 2;
+                rawCenter = new Vector3(
+                    count % 2 == 0
+                        ? (xSamples[middle - 1] + xSamples[middle]) * .5f
+                        : xSamples[middle],
+                    rawCenter.y / count,
+                    count % 2 == 0
+                        ? (zSamples[middle - 1] + zSamples[middle]) * .5f
+                        : zSamples[middle]
+                );
+            }
+
+            List<float> planarDistances = new List<float>();
+            for (int i = 0; i < sceneTargets.Count; i++)
+            {
+                Transform item = sceneTargets[i];
+                if (!item) continue;
+                Vector3 delta = item.position - rawCenter;
+                planarDistances.Add(new Vector2(delta.x, delta.z).magnitude);
+            }
+            planarDistances.Sort();
+            int percentileIndex = Mathf.Clamp(
+                Mathf.CeilToInt(planarDistances.Count * .90f) - 1,
+                0,
+                Mathf.Max(0, planarDistances.Count - 1)
+            );
+            float coreRadius = planarDistances.Count == 0
+                ? 1f
+                : Mathf.Max(1f, planarDistances[percentileIndex]);
+            float readableExtentLimit = coreRadius * 1.28f + 18f;
+
+            float horizontalExtent = 1f;
+            float forwardExtent = 1f;
+            for (int i = 0; i < sceneTargets.Count; i++)
+            {
+                Transform item = sceneTargets[i];
+                if (!item) continue;
+                Vector3 delta = item.position - rawCenter;
+                float hullMargin = IsUsv(item) ? 5f : IsUav(item) ? 3f : 8f;
+                horizontalExtent = Mathf.Max(horizontalExtent, Mathf.Min(
+                    readableExtentLimit,
+                    Mathf.Abs(Vector3.Dot(delta, yawRight)) + hullMargin
+                ));
+                forwardExtent = Mathf.Max(forwardExtent, Mathf.Min(
+                    readableExtentLimit,
+                    Mathf.Abs(Vector3.Dot(delta, yawForward)) + hullMargin
+                ));
+            }
             float verticalHalfFov = overviewFov * Mathf.Deg2Rad * .5f;
             float aspect = observedCamera
                 ? Mathf.Max(.75f, observedCamera.aspect)
@@ -573,25 +662,48 @@ namespace UavUsv.PlatformTools
                 Mathf.Tan(verticalHalfFov) * aspect
             );
             float groundProjection = Mathf.Sin(elevationDegrees * Mathf.Deg2Rad);
-            float horizontalDistance = spread / Mathf.Max(
+            float horizontalDistance = horizontalExtent / Mathf.Max(
                 .05f,
                 Mathf.Tan(horizontalHalfFov)
             );
-            float verticalDistance = spread * groundProjection / Mathf.Max(
+            float verticalDistance = forwardExtent * groundProjection / Mathf.Max(
                 .05f,
                 Mathf.Tan(verticalHalfFov)
             );
-            float distance = Mathf.Clamp(
+            float requiredDistance = Mathf.Clamp(
                 Mathf.Max(horizontalDistance, verticalDistance) * frameMargin + 5f,
                 14f,
-                220f
+                280f
             );
+            if (!overviewFrameInitialized)
+            {
+                overviewFocus = rawCenter;
+                overviewDistance = requiredDistance;
+                overviewFrameInitialized = true;
+            }
+            else
+            {
+                float focusT = 1f - Mathf.Exp(-2.2f * Time.unscaledDeltaTime);
+                overviewFocus = Vector3.Lerp(overviewFocus, rawCenter, focusT);
+                float relativeError = Mathf.Abs(requiredDistance - overviewDistance)
+                    / Mathf.Max(1f, overviewDistance);
+                if (requiredDistance > overviewDistance || relativeError > .06f)
+                {
+                    float response = requiredDistance > overviewDistance ? 8f : 1.35f;
+                    float distanceT = 1f - Mathf.Exp(-response * Time.unscaledDeltaTime);
+                    overviewDistance = Mathf.Lerp(
+                        overviewDistance,
+                        requiredDistance,
+                        distanceT
+                    );
+                }
+            }
             Vector3 offset = Quaternion.Euler(
                 elevationDegrees,
-                -35f,
+                overviewYaw,
                 0f
-            ) * Vector3.back * distance;
-            focus = groupCenter + Vector3.up * 1.2f;
+            ) * Vector3.back * overviewDistance;
+            focus = overviewFocus + Vector3.up * 1.2f;
             position = focus + offset;
             desiredFieldOfView = Mathf.Clamp(
                 overviewFov,
@@ -654,8 +766,11 @@ namespace UavUsv.PlatformTools
             }
         }
 
-        private void RefreshSceneTargets()
+        private void RefreshSceneTargets(bool force = false)
         {
+            if (!force && Time.unscaledTime < nextSceneTargetRefreshAt)
+                return;
+            nextSceneTargetRefreshAt = Time.unscaledTime + .10f;
             sceneTargets.Clear();
             if (!fleetManager)
                 fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
@@ -687,6 +802,7 @@ namespace UavUsv.PlatformTools
 
             AddFleetTargets(fleetManager.GetUavTransforms());
             AddFleetTargets(fleetManager.GetUsvTransforms());
+            AddFleetTargets(fleetManager.GetTargetTransforms());
             if (TrajectoryRenderingEnabled)
                 SyncFleetTrails();
             else
