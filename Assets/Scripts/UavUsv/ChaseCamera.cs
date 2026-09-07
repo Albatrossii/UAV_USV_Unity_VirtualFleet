@@ -55,11 +55,18 @@ namespace UavUsv
         [Header("Global overview")]
         public float overviewYaw = -35f;
         public float overviewPitch = 58f;
-        public float overviewWorldPadding = 12f;
-        public float overviewFitPadding = 1.12f;
-        public float overviewMinDistance = 55f;
-        public float overviewMaxDistance = 260f;
+        public float overviewWorldPadding = 8f;
+        public float overviewFitPadding = 1.06f;
+        public float overviewMinDistance = 38f;
+        public float overviewMaxDistance = 320f;
         public float overviewDistanceDeadZone = 2.5f;
+
+        [Header("Responsive readability")]
+        public bool showReadabilityMarkers = true;
+        public float uavMinimumMarkerPixels = 12f;
+        public float usvMinimumMarkerPixels = 16f;
+        public float targetMinimumMarkerPixels = 20f;
+        public float headingVectorPixels = 13f;
 
         [Header("Trajectory statistics inset")]
         // Algorithm simulation does not expose trajectory/inset rendering.
@@ -384,13 +391,36 @@ namespace UavUsv
             if (!TryGetGroupBounds(out Bounds bounds))
                 return;
 
-            bounds = ExpandBounds(bounds, overviewWorldPadding);
+            float viewportHeight = attachedCamera
+                ? Mathf.Max(1f, attachedCamera.pixelRect.height)
+                : Mathf.Max(1f, Screen.height);
+            // A WebGL panel has less usable height than fullscreen. Reduce
+            // empty ocean gently at 720-900p while retaining a conservative
+            // safety margin at 1080p, ultrawide and 4K.
+            float compactViewport = Mathf.InverseLerp(620f, 1080f, viewportHeight);
+            float responsiveWorldPadding = Mathf.Lerp(
+                Mathf.Max(4.5f, overviewWorldPadding * .62f),
+                overviewWorldPadding,
+                compactViewport
+            );
+            float responsiveFitPadding = Mathf.Lerp(
+                Mathf.Max(1.015f, overviewFitPadding * .96f),
+                overviewFitPadding,
+                compactViewport
+            );
+            float responsiveMinDistance = Mathf.Lerp(
+                Mathf.Max(26f, overviewMinDistance * .78f),
+                overviewMinDistance,
+                compactViewport
+            );
+
+            bounds = ExpandBounds(bounds, responsiveWorldPadding);
             UpdateFittedView(
                 bounds,
                 overviewYaw,
                 overviewPitch,
-                overviewFitPadding,
-                overviewMinDistance,
+                responsiveFitPadding,
+                responsiveMinDistance,
                 overviewMaxDistance,
                 overviewDistanceDeadZone,
                 ref overviewDistance
@@ -1062,6 +1092,8 @@ namespace UavUsv
         {
             EnsureGuiStyles();
             float uiScale = RuntimeGuiScale();
+            if (showReadabilityMarkers)
+                DrawReadabilityMarkers();
             if (showAgentLabels || showTargetLabels)
                 DrawAgentLabels();
 
@@ -1700,6 +1732,106 @@ namespace UavUsv
             }
         }
 
+        private void DrawReadabilityMarkers()
+        {
+            if (Event.current.type != EventType.Repaint || groupTargets == null)
+                return;
+            Camera camera = attachedCamera ? attachedCamera : GetComponent<Camera>();
+            if (!camera)
+                return;
+
+            EnsureTrajectoryPixel();
+            float uiScale = RuntimeGuiScale();
+            for (int i = 0; i < groupTargets.Length; i++)
+            {
+                Transform subject = groupTargets[i];
+                if (!IsVisibleSubject(subject))
+                    continue;
+
+                string objectName = subject.name;
+                bool isUav = IsUavName(objectName);
+                bool isTarget = IsEnemyName(objectName);
+                bool isProtected = IsProtectedName(objectName);
+                Vector3 worldCenter = subject.position;
+                float approximateRadius = isUav ? 1.1f : isTarget ? 3.1f : 2.6f;
+                if (TryGetVisualBounds(subject, out Bounds visualBounds))
+                {
+                    worldCenter = visualBounds.center;
+                    approximateRadius = Mathf.Max(
+                        approximateRadius,
+                        Mathf.Max(visualBounds.extents.x, visualBounds.extents.z)
+                    );
+                }
+
+                Vector3 viewport = camera.WorldToViewportPoint(worldCenter);
+                if (viewport.z <= 0f || viewport.x < .015f || viewport.x > .985f ||
+                    viewport.y < .025f || viewport.y > .975f)
+                    continue;
+                Vector3 screen = camera.WorldToScreenPoint(worldCenter);
+                Vector3 edge = camera.WorldToScreenPoint(
+                    worldCenter + camera.transform.right * approximateRadius
+                );
+                float projectedDiameter = Mathf.Abs(edge.x - screen.x) * 2f;
+                float minimumPixels = (
+                    isTarget
+                        ? targetMinimumMarkerPixels
+                        : isUav ? uavMinimumMarkerPixels : usvMinimumMarkerPixels
+                ) * uiScale;
+                // Once the rendered hull is already readable, retain only a
+                // subtle heading vector for hostile/protected targets.
+                bool needsHalo = projectedDiameter < minimumPixels;
+                if (!needsHalo && !isTarget && !isProtected)
+                    continue;
+
+                Color color = isTarget
+                    ? new Color(1f, .32f, .25f, .92f)
+                    : isProtected
+                        ? new Color(1f, .77f, .20f, .9f)
+                        : isUav
+                            ? new Color(.32f, .86f, 1f, .88f)
+                            : new Color(.35f, 1f, .72f, .88f);
+                Vector2 center = new Vector2(screen.x, Screen.height - screen.y);
+                float markerSize = Mathf.Max(minimumPixels, projectedDiameter);
+                if (needsHalo)
+                    DrawMarkerCorners(center, markerSize, color, Mathf.Max(1.3f, 1.6f * uiScale));
+
+                Vector3 forwardWorld = worldCenter + subject.forward * approximateRadius * 1.7f;
+                Vector3 forwardScreen = camera.WorldToScreenPoint(forwardWorld);
+                Vector2 heading = new Vector2(
+                    forwardScreen.x - screen.x,
+                    -(forwardScreen.y - screen.y)
+                );
+                if (heading.sqrMagnitude < .01f)
+                    heading = Vector2.up;
+                heading.Normalize();
+                float vectorLength = Mathf.Max(markerSize * .72f, headingVectorPixels * uiScale);
+                DrawGuiLine(
+                    center + heading * markerSize * .34f,
+                    center + heading * vectorLength,
+                    color,
+                    Mathf.Max(1.2f, 1.5f * uiScale)
+                );
+            }
+        }
+
+        private void DrawMarkerCorners(Vector2 center, float size, Color color, float width)
+        {
+            float half = size * .5f;
+            float arm = Mathf.Clamp(size * .24f, 3f, 7f * RuntimeGuiScale());
+            Vector2 topLeft = center + new Vector2(-half, -half);
+            Vector2 topRight = center + new Vector2(half, -half);
+            Vector2 bottomLeft = center + new Vector2(-half, half);
+            Vector2 bottomRight = center + new Vector2(half, half);
+            DrawGuiLine(topLeft, topLeft + Vector2.right * arm, color, width);
+            DrawGuiLine(topLeft, topLeft + Vector2.down * arm, color, width);
+            DrawGuiLine(topRight, topRight + Vector2.left * arm, color, width);
+            DrawGuiLine(topRight, topRight + Vector2.down * arm, color, width);
+            DrawGuiLine(bottomLeft, bottomLeft + Vector2.right * arm, color, width);
+            DrawGuiLine(bottomLeft, bottomLeft + Vector2.up * arm, color, width);
+            DrawGuiLine(bottomRight, bottomRight + Vector2.left * arm, color, width);
+            DrawGuiLine(bottomRight, bottomRight + Vector2.up * arm, color, width);
+        }
+
         private static bool IsUsvName(string value)
         {
             return !string.IsNullOrEmpty(value) &&
@@ -1801,13 +1933,13 @@ namespace UavUsv
 
         private static float RuntimeGuiScale()
         {
-            // Preserve the former 1080p size, but compensate gently when a 4K
-            // Game target is downscaled inside the editor. The 1.35 cap keeps
-            // labels readable without returning to the oversized UI variant.
+            // Cover compact 720p panels, common laptop/desktop resolutions,
+            // ultrawide displays and 4K without tying UI geometry to one
+            // reference build size.
             return Mathf.Clamp(
                 Mathf.Sqrt(Screen.height / 1080f),
-                1f,
-                1.35f
+                .82f,
+                1.5f
             );
         }
 
