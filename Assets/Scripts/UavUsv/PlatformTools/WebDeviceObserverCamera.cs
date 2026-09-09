@@ -235,6 +235,10 @@ namespace UavUsv.PlatformTools
                 chaseCamera = GetComponent<UavUsv.ChaseCamera>();
             if (chaseCamera)
                 chaseCamera.enabled = false;
+            var comparison = GetComponent<UavUsv.GazeboComparisonCamera>();
+            if (comparison) comparison.comparisonActive = false;
+            var orbit = GetComponent<UavUsv.OrbitCamera>();
+            if (orbit) orbit.enabled = false;
         }
 
         private void LateUpdate()
@@ -266,6 +270,14 @@ namespace UavUsv.PlatformTools
             float positionT = 1f - Mathf.Exp(-3.2f * Time.unscaledDeltaTime);
             float rotationT = 1f - Mathf.Exp(-4.8f * Time.unscaledDeltaTime);
             float fovT = 1f - Mathf.Exp(-3.5f * Time.unscaledDeltaTime);
+            if (mode == ObservationMode.Overview && interactionMode == ObservationMode.None)
+            {
+                // Overview already smooths its focus and distance together.
+                // A second positional/rotational lag would break the fitted frustum.
+                transform.SetPositionAndRotation(desiredPosition, desiredRotation);
+                observedCamera.fieldOfView = desiredFieldOfView;
+                return;
+            }
             transform.position = Vector3.Lerp(transform.position, desiredPosition, positionT);
             transform.rotation = Quaternion.Slerp(transform.rotation, desiredRotation, rotationT);
             observedCamera.fieldOfView = Mathf.Lerp(
@@ -575,141 +587,126 @@ namespace UavUsv.PlatformTools
             centerHeight = Mathf.Max(0f, bounds.center.y - subject.position.y);
         }
 
+        private readonly Dictionary<Transform, Renderer[]> framingRenderers = new Dictionary<Transform, Renderer[]>();
+        private readonly List<Vector3> framingPoints = new List<Vector3>();
+
+        private Bounds VisibleBounds(Transform subject)
+        {
+            if (!framingRenderers.TryGetValue(subject, out Renderer[] renderers))
+            {
+                renderers = subject.GetComponentsInChildren<Renderer>(false);
+                framingRenderers[subject] = renderers;
+            }
+            Bounds bounds = new Bounds(subject.position, Vector3.one);
+            bool found = false;
+            foreach (Renderer renderer in renderers)
+            {
+                if (!renderer || !renderer.enabled || !renderer.gameObject.activeInHierarchy ||
+                    renderer is LineRenderer || renderer is ParticleSystemRenderer) continue;
+                if (!found) { bounds = renderer.bounds; found = true; }
+                else bounds.Encapsulate(renderer.bounds);
+            }
+            return bounds;
+        }
+
         private void CalculateOverview(out Vector3 position, out Vector3 focus)
         {
-            const float elevationDegrees = 55f;
-            const float overviewFov = 52f;
-            const float frameMargin = 1.12f;
-            const float overviewYaw = -35f;
-            Vector3 yawRight = Quaternion.Euler(0f, overviewYaw, 0f) * Vector3.right;
-            Vector3 yawForward = Quaternion.Euler(0f, overviewYaw, 0f) * Vector3.forward;
-            Vector3 rawCenter = Vector3.zero;
-            int count = 0;
-            List<float> xSamples = new List<float>();
-            List<float> zSamples = new List<float>();
-            for (int i = 0; i < sceneTargets.Count; i++)
+            // Fit every visible hull in camera coordinates, including altitude
+            // and perspective depth. No percentile exclusion or far-distance cap.
+            const float fov = 52f;
+            Quaternion rotation = Quaternion.Euler(60f, -35f, 0f);
+            Quaternion inverse = Quaternion.Inverse(rotation);
+            framingPoints.Clear();
+            Vector3 minimum = Vector3.one * float.PositiveInfinity;
+            Vector3 maximum = Vector3.one * float.NegativeInfinity;
+            foreach (Transform subject in sceneTargets)
             {
-                Transform item = sceneTargets[i];
-                if (!item) continue;
-                rawCenter += item.position;
-                xSamples.Add(item.position.x);
-                zSamples.Add(item.position.z);
-                count++;
-            }
-            if (count == 0)
-                rawCenter = selectedSubject ? selectedSubject.position : Vector3.zero;
-            else
-            {
-                // A mean is dominated by a single attacker that has moved far
-                // away and makes the whole fleet unreadably small. Use a
-                // robust median action centre, then frame the dense tactical
-                // group while still allowing the view to follow it smoothly.
-                xSamples.Sort();
-                zSamples.Sort();
-                int middle = count / 2;
-                rawCenter = new Vector3(
-                    count % 2 == 0
-                        ? (xSamples[middle - 1] + xSamples[middle]) * .5f
-                        : xSamples[middle],
-                    rawCenter.y / count,
-                    count % 2 == 0
-                        ? (zSamples[middle - 1] + zSamples[middle]) * .5f
-                        : zSamples[middle]
-                );
-            }
-
-            List<float> planarDistances = new List<float>();
-            for (int i = 0; i < sceneTargets.Count; i++)
-            {
-                Transform item = sceneTargets[i];
-                if (!item) continue;
-                Vector3 delta = item.position - rawCenter;
-                planarDistances.Add(new Vector2(delta.x, delta.z).magnitude);
-            }
-            planarDistances.Sort();
-            int percentileIndex = Mathf.Clamp(
-                Mathf.CeilToInt(planarDistances.Count * .90f) - 1,
-                0,
-                Mathf.Max(0, planarDistances.Count - 1)
-            );
-            float coreRadius = planarDistances.Count == 0
-                ? 1f
-                : Mathf.Max(1f, planarDistances[percentileIndex]);
-            float readableExtentLimit = coreRadius * 1.28f + 18f;
-
-            float horizontalExtent = 1f;
-            float forwardExtent = 1f;
-            for (int i = 0; i < sceneTargets.Count; i++)
-            {
-                Transform item = sceneTargets[i];
-                if (!item) continue;
-                Vector3 delta = item.position - rawCenter;
-                float hullMargin = IsUsv(item) ? 5f : IsUav(item) ? 3f : 8f;
-                horizontalExtent = Mathf.Max(horizontalExtent, Mathf.Min(
-                    readableExtentLimit,
-                    Mathf.Abs(Vector3.Dot(delta, yawRight)) + hullMargin
-                ));
-                forwardExtent = Mathf.Max(forwardExtent, Mathf.Min(
-                    readableExtentLimit,
-                    Mathf.Abs(Vector3.Dot(delta, yawForward)) + hullMargin
-                ));
-            }
-            float verticalHalfFov = overviewFov * Mathf.Deg2Rad * .5f;
-            float aspect = observedCamera
-                ? Mathf.Max(.75f, observedCamera.aspect)
-                : 1.2f;
-            float horizontalHalfFov = Mathf.Atan(
-                Mathf.Tan(verticalHalfFov) * aspect
-            );
-            float groundProjection = Mathf.Sin(elevationDegrees * Mathf.Deg2Rad);
-            float horizontalDistance = horizontalExtent / Mathf.Max(
-                .05f,
-                Mathf.Tan(horizontalHalfFov)
-            );
-            float verticalDistance = forwardExtent * groundProjection / Mathf.Max(
-                .05f,
-                Mathf.Tan(verticalHalfFov)
-            );
-            float requiredDistance = Mathf.Clamp(
-                Mathf.Max(horizontalDistance, verticalDistance) * frameMargin + 5f,
-                14f,
-                280f
-            );
-            if (!overviewFrameInitialized)
-            {
-                overviewFocus = rawCenter;
-                overviewDistance = requiredDistance;
-                overviewFrameInitialized = true;
-            }
-            else
-            {
-                float focusT = 1f - Mathf.Exp(-2.2f * Time.unscaledDeltaTime);
-                overviewFocus = Vector3.Lerp(overviewFocus, rawCenter, focusT);
-                float relativeError = Mathf.Abs(requiredDistance - overviewDistance)
-                    / Mathf.Max(1f, overviewDistance);
-                if (requiredDistance > overviewDistance || relativeError > .06f)
+                if (!subject || !subject.gameObject.activeInHierarchy) continue;
+                Bounds bounds = VisibleBounds(subject);
+                for (int corner = 0; corner < 8; corner++)
                 {
-                    float response = requiredDistance > overviewDistance ? 8f : 1.35f;
-                    float distanceT = 1f - Mathf.Exp(-response * Time.unscaledDeltaTime);
-                    overviewDistance = Mathf.Lerp(
-                        overviewDistance,
-                        requiredDistance,
-                        distanceT
-                    );
+                    Vector3 point = bounds.center + Vector3.Scale(bounds.extents, new Vector3(
+                        (corner & 1) == 0 ? -1f : 1f,
+                        (corner & 2) == 0 ? -1f : 1f,
+                        (corner & 4) == 0 ? -1f : 1f));
+                    Vector3 projected = inverse * point;
+                    minimum = Vector3.Min(minimum, projected);
+                    maximum = Vector3.Max(maximum, projected);
+                    framingPoints.Add(point);
                 }
             }
-            Vector3 offset = Quaternion.Euler(
-                elevationDegrees,
-                overviewYaw,
-                0f
-            ) * Vector3.back * overviewDistance;
-            focus = overviewFocus + Vector3.up * 1.2f;
-            position = focus + offset;
-            desiredFieldOfView = Mathf.Clamp(
-                overviewFov,
-                42f,
-                60f
-            );
+            Vector3 rawFocus = framingPoints.Count == 0 ? Vector3.zero : rotation * ((minimum + maximum) * .5f);
+            if (!overviewFrameInitialized) overviewFocus = rawFocus;
+            else overviewFocus = Vector3.Lerp(overviewFocus, rawFocus, 1f-Mathf.Exp(-3f*Time.unscaledDeltaTime));
+
+            float tanY = Mathf.Tan(fov * Mathf.Deg2Rad * .5f);
+            float tanX = tanY * Mathf.Max(.1f, observedCamera.aspect);
+            float required = 20f;
+            foreach (Vector3 point in framingPoints)
+            {
+                Vector3 local = inverse * (point-overviewFocus);
+                // Use binary overloads: the params overload allocates an array
+                // for every corner of every vessel on every render frame.
+                required = Mathf.Max(required, Mathf.Abs(local.x)/(tanX*.88f)-local.z);
+                required = Mathf.Max(required, Mathf.Abs(local.y)/(tanY*.84f)-local.z);
+                required = Mathf.Max(required, observedCamera.nearClipPlane+1f-local.z);
+            }
+            // Expansion is a visibility constraint; contraction is damped.
+            // Normal motion changes the fitted distance continuously. Only a
+            // newly generated scenario needs a one-time reframing jump.
+            if (!overviewFrameInitialized || required > overviewDistance) overviewDistance = required;
+            else if (required < overviewDistance*.97f)
+                overviewDistance = Mathf.Lerp(overviewDistance, required, 1f-Mathf.Exp(-1.4f*Time.unscaledDeltaTime));
+            overviewFrameInitialized = true;
+            focus = overviewFocus;
+            position = focus-rotation*Vector3.forward*overviewDistance;
+            desiredFieldOfView = fov;
+        }
+
+        [Serializable]
+        public sealed class FramingReport
+        {
+            public string controller;
+            public int deviceCount;
+            public int outsideCount;
+            public float minimumX, maximumX, minimumY, maximumY, minimumDevicePixels;
+            public float cameraX, cameraY, cameraZ, focusX, focusY, focusZ;
+            public float aspect;
+            public string revision;
+        }
+
+        public FramingReport GetFramingReport()
+        {
+            var report = new FramingReport { controller = CurrentModeName, revision = "full-hull-20260909",
+                minimumX = 1f, minimumY = 1f, maximumX = 0f, maximumY = 0f,
+                minimumDevicePixels = float.MaxValue };
+            if (!observedCamera) return report;
+            report.aspect = observedCamera.aspect;
+            Vector3 cp = observedCamera.transform.position;
+            report.cameraX=cp.x; report.cameraY=cp.y; report.cameraZ=cp.z;
+            report.focusX=overviewFocus.x; report.focusY=overviewFocus.y; report.focusZ=overviewFocus.z;
+            foreach (Transform subject in sceneTargets)
+            {
+                if (!subject || !subject.gameObject.activeInHierarchy) continue;
+                report.deviceCount++;
+                Bounds bounds = VisibleBounds(subject);
+                Vector2 lo = Vector2.one * float.PositiveInfinity, hi = Vector2.one * float.NegativeInfinity;
+                bool outside = false;
+                for (int corner=0;corner<8;corner++)
+                {
+                    Vector3 point = bounds.center + Vector3.Scale(bounds.extents,new Vector3(
+                        (corner&1)==0?-1:1, (corner&2)==0?-1:1, (corner&4)==0?-1:1));
+                    Vector3 v = observedCamera.WorldToViewportPoint(point);
+                    outside |= v.z <= 0 || v.x < 0 || v.x > 1 || v.y < 0 || v.y > 1;
+                    lo=Vector2.Min(lo,new Vector2(v.x,v.y)); hi=Vector2.Max(hi,new Vector2(v.x,v.y));
+                }
+                if (outside) report.outsideCount++;
+                report.minimumX=Mathf.Min(report.minimumX,lo.x); report.maximumX=Mathf.Max(report.maximumX,hi.x);
+                report.minimumY=Mathf.Min(report.minimumY,lo.y); report.maximumY=Mathf.Max(report.maximumY,hi.y);
+                report.minimumDevicePixels=Mathf.Min(report.minimumDevicePixels,
+                    Mathf.Max((hi.x-lo.x)*observedCamera.pixelWidth,(hi.y-lo.y)*observedCamera.pixelHeight));
+            }
+            return report;
         }
 
         private void CalculateLighthouseView(out Vector3 position, out Vector3 focus)
@@ -772,6 +769,7 @@ namespace UavUsv.PlatformTools
                 return;
             nextSceneTargetRefreshAt = Time.unscaledTime + .10f;
             sceneTargets.Clear();
+            if (framingRenderers.Count > 128) framingRenderers.Clear();
             if (!fleetManager)
                 fleetManager = FindObjectOfType<UavUsv.VirtualFleetManager>();
 

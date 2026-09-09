@@ -311,19 +311,32 @@ namespace UavUsv
                 VirtualFleetDeviceState state = devices[i];
                 if (state == null || !state.transform || !state.hasDesiredPose)
                     continue;
-                // A large discontinuity is a scenario reset or coordinate
-                // frame change, not physical motion. Snap it once; normal
-                // 10 Hz algorithm frames are interpolated every render frame.
+                // Reset/spawn uses TryApplyPoseImmediate explicitly. Never
+                // infer a reset from a large streamed position difference.
                 Vector3 positionBefore = state.transform.position;
-                if ((positionBefore - state.desiredPosition).sqrMagnitude > 400f)
-                    state.transform.position = state.desiredPosition;
-                else
-                    state.transform.position = Vector3.Lerp(
+                state.transform.position = Vector3.Lerp(
                         state.transform.position,
                         state.desiredPosition,
                         positionT
                     );
                 float movedSqr = (state.transform.position - positionBefore).sqrMagnitude;
+                if (state.deviceType == "TARGET")
+                {
+                    // Surface targets only move bow-first. Derive the visual
+                    // bow from the SAME smoothed displacement, not a second
+                    // slower yaw filter (previously 36 versus 70 deg/s).
+                    // Stationary turns remain rate-limited. Guard USVs keep
+                    // their independent heading so deliberate astern is valid.
+                    Vector3 motion = state.transform.position - positionBefore;
+                    motion.y = 0f;
+                    state.transform.rotation = motion.sqrMagnitude > 0.00000001f
+                        ? Quaternion.Euler(0f, -Mathf.Atan2(motion.z, motion.x) * Mathf.Rad2Deg, 0f)
+                        : Quaternion.RotateTowards(state.transform.rotation, state.desiredRotation,
+                            72f * Mathf.Max(0f, deltaTime));
+                    state.position = state.transform.position;
+                    state.rotation = state.transform.rotation;
+                    continue;
+                }
                 float maximumYawRate = state.deviceType == "USV"
                     // Algorithm frames may command up to seven degrees per
                     // 100 ms tick. Match that physical envelope so a moving

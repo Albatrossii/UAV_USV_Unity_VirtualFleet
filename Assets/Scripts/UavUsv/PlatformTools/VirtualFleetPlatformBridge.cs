@@ -422,6 +422,7 @@ namespace UavUsv.PlatformTools
             VirtualPoseBatchApplyResult applyResult =
                 runtime.ApplyPoseBatch(ToRuntimePoseBatch(message.payload));
             UavUsv.VirtualFleetDeviceState trackedDevice = GetTrackedDeviceState("UAV-001");
+            var framingCamera = Camera.main ? Camera.main.GetComponent<WebDeviceObserverCamera>() : null;
             Emit(new PoseAppliedResponse
             {
                 type = "poseFrameApplied",
@@ -435,6 +436,7 @@ namespace UavUsv.PlatformTools
                     runId = applyResult.runId,
                     sequence = lastSequence,
                     appliedCount = applyResult.appliedCount,
+                    framing = lastSequence % 10 == 0 && framingCamera ? framingCamera.GetFramingReport() : null,
                     missingDeviceCodes = applyResult.missingDeviceCodes ?? new string[0],
                     unknownDeviceCodes = applyResult.unknownDeviceCodes ?? new string[0],
                     trackedDeviceCode = trackedDevice != null
@@ -1041,6 +1043,7 @@ namespace UavUsv.PlatformTools
             public long runId;
             public long sequence;
             public int appliedCount;
+            public WebDeviceObserverCamera.FramingReport framing;
             public string[] missingDeviceCodes;
             public string[] unknownDeviceCodes;
             public string trackedDeviceCode;
