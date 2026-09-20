@@ -20,6 +20,14 @@ namespace UavUsv.PlatformTools
         private WebCommandBridge cameraBridge;
         private VirtualFleetPoseOwnershipGuard poseOwnershipGuard;
         private VirtualFleetSceneSafety sceneSafety;
+        private string presentationRuntimeRef = string.Empty;
+        private string presentationGeneration = string.Empty;
+        private string presentationBindingId = string.Empty;
+        private string presentationInstanceId = string.Empty;
+        private long presentationSceneRevision;
+        private long presentationFrameSequence;
+        private bool presentationSceneReady;
+        private float nextPresentationHeartbeat;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -46,6 +54,26 @@ namespace UavUsv.PlatformTools
             instance = this;
             TryFindRuntime();
             cameraBridge = FindObjectOfType<WebCommandBridge>();
+            nextPresentationHeartbeat = Time.unscaledTime + 2f;
+        }
+
+        private void Update()
+        {
+            if (string.IsNullOrEmpty(presentationInstanceId) || Time.unscaledTime < nextPresentationHeartbeat)
+                return;
+            nextPresentationHeartbeat = Time.unscaledTime + 2f;
+            Emit(new PresentationHeartbeatResponse
+            {
+                type = VirtualFleetMessageTypes.PresentationHeartbeat,
+                protocolVersion = "unity.presentation.v1",
+                runtimeRef = presentationRuntimeRef,
+                runtimeGeneration = presentationGeneration,
+                bindingId = presentationBindingId,
+                unityInstanceId = presentationInstanceId,
+                sceneRevision = presentationSceneRevision,
+                scenarioReady = presentationSceneReady,
+                lastAppliedFrameSequence = presentationFrameSequence
+            });
         }
 
         [Preserve]
@@ -264,7 +292,9 @@ namespace UavUsv.PlatformTools
                 type == VirtualFleetMessageTypes.MissionPause ||
                 type == VirtualFleetMessageTypes.MissionResume ||
                 type == VirtualFleetMessageTypes.MissionStop ||
-                type == VirtualFleetMessageTypes.MissionReset;
+                type == VirtualFleetMessageTypes.MissionReset ||
+                type == VirtualFleetMessageTypes.PresentationHello ||
+                type == VirtualFleetMessageTypes.PresentationProbe;
         }
 
         [Preserve]
@@ -308,6 +338,12 @@ namespace UavUsv.PlatformTools
                 case VirtualFleetMessageTypes.MissionReset:
                     HandleMission(JsonUtility.FromJson<MissionCommandMessage>(json));
                     break;
+                case VirtualFleetMessageTypes.PresentationHello:
+                    HandlePresentationHello(JsonUtility.FromJson<PresentationEnvelope>(json));
+                    break;
+                case VirtualFleetMessageTypes.PresentationProbe:
+                    HandlePresentationProbe(JsonUtility.FromJson<PresentationEnvelope>(json));
+                    break;
                 default:
                     EmitError(header.requestId, "unsupported_message", "Unsupported message type");
                     break;
@@ -350,6 +386,70 @@ namespace UavUsv.PlatformTools
                     }
                 }
             });
+        }
+
+        private void HandlePresentationHello(PresentationEnvelope message)
+        {
+            if (message == null || message.protocolVersion != "unity.presentation.v1")
+            {
+                EmitError(message != null ? message.requestId : string.Empty,
+                    "invalid_presentation_protocol", "unity.presentation.v1 is required");
+                return;
+            }
+            presentationRuntimeRef = message.runtimeRef ?? string.Empty;
+            presentationGeneration = message.runtimeGeneration ?? string.Empty;
+            presentationBindingId = message.bindingId ?? string.Empty;
+            presentationInstanceId = message.unityInstanceId ?? string.Empty;
+            presentationSceneRevision = message.sceneRevision;
+            EmitPresentation(VirtualFleetMessageTypes.PresentationReady, message.requestId,
+                message.sequence, string.Empty, string.Empty, presentationSceneReady,
+                presentationFrameSequence, false, 0);
+        }
+
+        private void HandlePresentationProbe(PresentationEnvelope message)
+        {
+            if (message == null || message.protocolVersion != "unity.presentation.v1" ||
+                message.runtimeRef != presentationRuntimeRef ||
+                message.runtimeGeneration != presentationGeneration ||
+                message.bindingId != presentationBindingId ||
+                message.unityInstanceId != presentationInstanceId ||
+                message.sceneRevision != presentationSceneRevision)
+            {
+                EmitError(message != null ? message.requestId : string.Empty,
+                    "presentation_identity_mismatch", "presentation session does not match");
+                return;
+            }
+            bool sceneReady = runtime != null && currentConfig != null;
+            presentationSceneReady = sceneReady;
+            EmitPresentation(VirtualFleetMessageTypes.PresentationReport, message.requestId,
+                message.sequence, message.kind, message.executionId, sceneReady,
+                presentationFrameSequence, sceneReady, presentationFrameSequence);
+        }
+
+        private void EmitPresentation(string type, string requestId, long sequence,
+            string kind, string executionId, bool scenarioReady, long lastFrame,
+            bool applied, long frameSequence)
+        {
+            if (type == VirtualFleetMessageTypes.PresentationReady)
+                Emit(new PresentationReadyResponse
+                {
+                    type = type, protocolVersion = "unity.presentation.v1",
+                    runtimeRef = presentationRuntimeRef, runtimeGeneration = presentationGeneration,
+                    bindingId = presentationBindingId, unityInstanceId = presentationInstanceId,
+                    sceneRevision = presentationSceneRevision, scenarioReady = scenarioReady,
+                    lastAppliedFrameSequence = lastFrame
+                });
+            else
+                Emit(new PresentationReportResponse
+                {
+                    type = type, protocolVersion = "unity.presentation.v1",
+                    runtimeRef = presentationRuntimeRef, runtimeGeneration = presentationGeneration,
+                    bindingId = presentationBindingId, unityInstanceId = presentationInstanceId,
+                    sceneRevision = presentationSceneRevision, requestId = requestId ?? string.Empty,
+                    sequence = sequence, kind = kind ?? string.Empty,
+                    executionId = executionId ?? string.Empty, frameSequence = frameSequence,
+                    applied = applied
+                });
         }
 
         private void HandleLoadScenario(LoadScenarioMessage message)
@@ -419,6 +519,7 @@ namespace UavUsv.PlatformTools
                 return;
 
             lastSequence = message.payload.sequence;
+            presentationFrameSequence = lastSequence;
             VirtualPoseBatchApplyResult applyResult =
                 runtime.ApplyPoseBatch(ToRuntimePoseBatch(message.payload));
             UavUsv.VirtualFleetDeviceState trackedDevice = GetTrackedDeviceState("UAV-001");

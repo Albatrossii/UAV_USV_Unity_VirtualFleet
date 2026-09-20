@@ -14,6 +14,11 @@ namespace UavUsv.PlatformTools
         public const string MissionResume = "missionResume";
         public const string MissionStop = "missionStop";
         public const string MissionReset = "missionReset";
+        public const string PresentationHello = "PRESENTATION_HELLO";
+        public const string PresentationReady = "PRESENTATION_READY";
+        public const string PresentationHeartbeat = "PRESENTATION_HEARTBEAT";
+        public const string PresentationProbe = "PRESENTATION_PROBE";
+        public const string PresentationReport = "PRESENTATION_REPORT";
     }
 
     public static class VirtualFleetProtocol
@@ -167,5 +172,69 @@ namespace UavUsv.PlatformTools
     {
         public long runId;
         public string state;
+    }
+
+    [Serializable]
+    public sealed class PresentationEnvelope : VirtualFleetMessage
+    {
+        public string protocolVersion;
+        public string runtimeRef;
+        public string runtimeGeneration;
+        public string bindingId;
+        public string unityInstanceId;
+        public long sceneRevision;
+        public bool scenarioReady;
+        public long lastAppliedFrameSequence;
+        public long sequence;
+        public string kind;
+        public string executionId;
+        public bool applied;
+        public long frameSequence;
+    }
+
+    [Serializable]
+    public sealed class PresentationReadyResponse
+    {
+        public string type;
+        public string protocolVersion;
+        public string runtimeRef;
+        public string runtimeGeneration;
+        public string bindingId;
+        public string unityInstanceId;
+        public long sceneRevision;
+        public bool scenarioReady;
+        public long lastAppliedFrameSequence;
+    }
+
+    [Serializable]
+    public sealed class PresentationReportResponse
+    {
+        public string type;
+        public string protocolVersion;
+        public string runtimeRef;
+        public string runtimeGeneration;
+        public string bindingId;
+        public string unityInstanceId;
+        public long sceneRevision;
+        public string requestId;
+        public long sequence;
+        public string kind;
+        public string executionId;
+        public long frameSequence;
+        public bool applied;
+    }
+
+    [Serializable]
+    public sealed class PresentationHeartbeatResponse
+    {
+        public string type;
+        public string protocolVersion;
+        public string runtimeRef;
+        public string runtimeGeneration;
+        public string bindingId;
+        public string unityInstanceId;
+        public long sceneRevision;
+        public bool scenarioReady;
+        public long lastAppliedFrameSequence;
     }
 }
