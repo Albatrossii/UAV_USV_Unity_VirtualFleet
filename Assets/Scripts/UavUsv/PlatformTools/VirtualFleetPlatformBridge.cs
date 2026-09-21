@@ -447,7 +447,7 @@ namespace UavUsv.PlatformTools
                     bindingId = presentationBindingId, unityInstanceId = presentationInstanceId,
                     sceneRevision = presentationSceneRevision, requestId = requestId ?? string.Empty,
                     sequence = sequence, kind = kind ?? string.Empty,
-                    executionId = executionId ?? string.Empty, frameSequence = frameSequence,
+                    executionId = executionId, frameSequence = frameSequence,
                     applied = applied
                 });
         }
@@ -1059,7 +1059,10 @@ namespace UavUsv.PlatformTools
 
         private static void Emit(object response)
         {
-            string json = JsonUtility.ToJson(response);
+            PresentationReportResponse report = response as PresentationReportResponse;
+            string json = report != null
+                ? VirtualFleetProtocol.SerializePresentationReport(report)
+                : JsonUtility.ToJson(response);
 #if UNITY_WEBGL && !UNITY_EDITOR
             VueWebGlPostMessage(json);
 #else

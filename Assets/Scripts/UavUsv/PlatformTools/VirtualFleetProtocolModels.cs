@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 using UavUsv;
 
 namespace UavUsv.PlatformTools
@@ -29,6 +30,23 @@ namespace UavUsv.PlatformTools
         public const int MaxUavCount = 128;
         public const int MaxUsvCount = 128;
         public const int MaxTargetCount = 12;
+
+        public static string SerializePresentationReport(PresentationReportResponse response)
+        {
+            if (response == null)
+                return "null";
+
+            string json = JsonUtility.ToJson(response);
+            if (response.executionId == null)
+            {
+                const string emptyExecutionId = "\"executionId\":\"\"";
+                const string nullExecutionId = "\"executionId\":null";
+                json = json.Replace(emptyExecutionId, nullExecutionId);
+                if (json.IndexOf("\"executionId\":", StringComparison.Ordinal) < 0)
+                    json = json.Insert(1, nullExecutionId + ",");
+            }
+            return json;
+        }
     }
 
     public static class VirtualFleetAlgorithms
