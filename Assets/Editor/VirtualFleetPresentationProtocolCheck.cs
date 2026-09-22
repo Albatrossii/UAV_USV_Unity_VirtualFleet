@@ -17,7 +17,9 @@ namespace UavUsv.Editor.Tools
                     type = VirtualFleetMessageTypes.PresentationReport,
                     protocolVersion = "unity.presentation.v1",
                     kind = "SCENE_READY",
-                    executionId = null,
+                    // JsonUtility maps an incoming JSON null string to an
+                    // empty string. SCENE_READY must still serialize as null.
+                    executionId = string.Empty,
                     applied = true
                 });
 

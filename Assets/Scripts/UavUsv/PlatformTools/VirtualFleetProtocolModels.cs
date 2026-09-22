@@ -37,7 +37,8 @@ namespace UavUsv.PlatformTools
                 return "null";
 
             string json = JsonUtility.ToJson(response);
-            if (response.executionId == null)
+            if (response.executionId == null ||
+                (response.kind == "SCENE_READY" && string.IsNullOrEmpty(response.executionId)))
             {
                 const string emptyExecutionId = "\"executionId\":\"\"";
                 const string nullExecutionId = "\"executionId\":null";
