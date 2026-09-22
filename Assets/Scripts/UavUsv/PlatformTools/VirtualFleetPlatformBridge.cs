@@ -26,6 +26,7 @@ namespace UavUsv.PlatformTools
         private string presentationInstanceId = string.Empty;
         private long presentationSceneRevision;
         private long presentationFrameSequence;
+        private bool presentationHasAppliedFrame;
         private bool presentationSceneReady;
         private float nextPresentationHeartbeat;
 
@@ -421,9 +422,12 @@ namespace UavUsv.PlatformTools
             }
             bool sceneReady = runtime != null && currentConfig != null;
             presentationSceneReady = sceneReady;
+            bool applied = message.kind == "SCENE_READY"
+                ? sceneReady
+                : message.kind == "FRAME_APPLIED" && sceneReady && presentationHasAppliedFrame;
             EmitPresentation(VirtualFleetMessageTypes.PresentationReport, message.requestId,
                 message.sequence, message.kind, message.executionId, sceneReady,
-                presentationFrameSequence, sceneReady, presentationFrameSequence);
+                presentationFrameSequence, applied, presentationFrameSequence);
         }
 
         private void EmitPresentation(string type, string requestId, long sequence,
@@ -519,9 +523,17 @@ namespace UavUsv.PlatformTools
                 return;
 
             lastSequence = message.payload.sequence;
-            presentationFrameSequence = lastSequence;
             VirtualPoseBatchApplyResult applyResult =
                 runtime.ApplyPoseBatch(ToRuntimePoseBatch(message.payload));
+            bool frameFullyApplied = applyResult.success
+                && applyResult.appliedCount > 0
+                && (applyResult.missingDeviceCodes == null || applyResult.missingDeviceCodes.Length == 0)
+                && (applyResult.unknownDeviceCodes == null || applyResult.unknownDeviceCodes.Length == 0);
+            if (frameFullyApplied)
+            {
+                presentationFrameSequence = lastSequence;
+                presentationHasAppliedFrame = true;
+            }
             UavUsv.VirtualFleetDeviceState trackedDevice = GetTrackedDeviceState("UAV-001");
             var framingCamera = Camera.main ? Camera.main.GetComponent<WebDeviceObserverCamera>() : null;
             Emit(new PoseAppliedResponse
@@ -671,6 +683,9 @@ namespace UavUsv.PlatformTools
 
         private void ResetPresentationTrails()
         {
+            presentationSceneReady = false;
+            presentationFrameSequence = 0;
+            presentationHasAppliedFrame = false;
             if (!cameraBridge)
                 cameraBridge = FindObjectOfType<WebCommandBridge>();
             if (cameraBridge)
